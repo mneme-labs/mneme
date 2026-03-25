@@ -4,8 +4,8 @@ description: >
   Mneme — distributed in-memory cache built in Rust.
   Supports solo, cluster (Core + Keepers), and HA (3-Core Raft) topologies.
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 1.0.0
+appVersion: "1.0.0"
 home: https://mnemelabs.io
 sources:
   - https://github.com/mneme-labs/mneme

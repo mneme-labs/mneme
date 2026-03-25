@@ -27,7 +27,7 @@ docker run -d \
   -p 6379:6379 \
   -e MNEME_ADMIN_PASSWORD=secret \
   -v mneme-data:/var/lib/mneme \
-  mnemelabs/core:0.1.0
+  mnemelabs/core:1.0.0
 ```
 
 Connect:
@@ -49,7 +49,7 @@ docker exec mneme mneme-cli -u admin -p secret get hello
 ```yaml
 services:
   mneme:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-solo
     entrypoint: ["/bin/bash", "/docker/entrypoint-solo.sh"]
     user: root
@@ -72,7 +72,7 @@ volumes:
 ```yaml
 services:
   mneme-core:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-core
     entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
     user: root
@@ -89,7 +89,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-1:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-1
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -104,7 +104,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-2:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-2
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root

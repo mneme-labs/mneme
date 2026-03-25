@@ -1,6 +1,6 @@
 [package]
 name = "mneme-cli"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [[bin]]
@@ -22,3 +22,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
+base64 = { workspace = true }

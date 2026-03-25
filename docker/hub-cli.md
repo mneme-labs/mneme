@@ -21,7 +21,7 @@
 docker run --rm \
   --link mneme-core \
   -e MNEME_HOST=mneme-core:6379 \
-  mnemelabs/cli:0.1.0 \
+  mnemelabs/cli:1.0.0 \
   mneme-cli -u admin -p secret ping
 # PONG
 ```

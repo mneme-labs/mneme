@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # MnemeCache — Core node entrypoint (cluster / HA mode)
 #
-# Bootstraps admin user, manages shared CA cert for mTLS cluster trust,
-# then starts mneme-core.
+# Copies the static config to a runtime path, injects environment variable
+# overrides (join_token, pool_bytes), then starts mneme-core.
 #
 # For HA (multi-core Raft): all cores share the same CA and cert material
 # from the /certs volume. Core-1 (first to start) generates and publishes;
@@ -10,11 +10,15 @@
 #
 # Environment variables:
 #   MNEME_ADMIN_PASSWORD   Admin password (default: "secret")
+#   MNEME_CLUSTER_SECRET   Shared join token for Keeper auth — REQUIRED in production
+#   MNEME_POOL_BYTES       Hot RAM pool size, e.g. "512mb", "2gb" (default: "512mb")
 #   MNEME_LOG_LEVEL        Log verbosity (default: "info")
+#   MNEME_CONFIG           Base config path (default: /etc/mneme/core.toml)
 
 set -euo pipefail
 
-CONFIG="${MNEME_CONFIG:-/etc/mneme/core.toml}"
+BASE_CFG="${MNEME_CONFIG:-/etc/mneme/core.toml}"
+CONFIG=/tmp/mneme-core-runtime.toml
 DATA_DIR=/var/lib/mneme
 ADMIN_PASS="${MNEME_ADMIN_PASSWORD:-secret}"
 LOG_LEVEL="${MNEME_LOG_LEVEL:-info}"
@@ -47,6 +51,19 @@ elif [ -d /certs ]; then
     else
         echo "[core] No shared CA — will auto-generate (this node is the first)"
     fi
+fi
+
+# ── Inject env var overrides into a runtime copy of the config ───────────
+cp "$BASE_CFG" "$CONFIG"
+
+if [ -n "${MNEME_CLUSTER_SECRET:-}" ]; then
+    sed -i "s|^join_token *=.*|join_token = \"${MNEME_CLUSTER_SECRET}\"|" "$CONFIG"
+    echo "[core] Applied MNEME_CLUSTER_SECRET → join_token"
+fi
+
+if [ -n "${MNEME_POOL_BYTES:-}" ]; then
+    sed -i "s|^pool_bytes *=.*|pool_bytes = \"${MNEME_POOL_BYTES}\"|" "$CONFIG"
+    echo "[core] Applied MNEME_POOL_BYTES → pool_bytes (${MNEME_POOL_BYTES})"
 fi
 
 # Bootstrap admin user (writes to users.db, then exits — no server needed)
@@ -86,7 +103,7 @@ if [ -f "${DATA_DIR}/ca.crt" ] && [ ! -f "$CA_DST" ]; then
     echo "[core] Published CA cert + node cert/key to shared volume"
 fi
 
-# Symlink CA cert to CLI default path so mneme-cli works without --insecure
+# Symlink CA cert to CLI default path so mneme-cli works without --ca-cert
 if [ -f "${DATA_DIR}/ca.crt" ]; then
     mkdir -p /etc/mneme
     ln -sf "${DATA_DIR}/ca.crt" /etc/mneme/ca.crt

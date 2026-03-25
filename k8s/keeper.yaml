@@ -140,7 +140,7 @@ spec:
               mountPath: /etc/mneme
       containers:
         - name: mneme-keeper
-          image: mnemelabs/keeper:0.1.0
+          image: mnemelabs/keeper:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/mneme-keeper"]
           args: ["--config", "/etc/mneme/mneme.toml"]

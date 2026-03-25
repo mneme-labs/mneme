@@ -237,7 +237,7 @@ for f in "${MANIFESTS_TO_APPLY[@]}"; do
   cp "$f" "$dest"
 
   if [[ "$name" == "core.yaml" || "$name" == "keeper.yaml" || "$name" == "replica.yaml" ]]; then
-    sed -i.bak "s|image: mnemelabs/core:0.1.0|image: ${FULL_IMAGE}|g" "$dest"
+    sed -i.bak "s|image: mnemelabs/core:1.0.0|image: ${FULL_IMAGE}|g" "$dest"
     rm -f "${dest}.bak"
     info "Patched image in ${name}: ${FULL_IMAGE}"
   fi

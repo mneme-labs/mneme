@@ -131,7 +131,7 @@ metadata:
   labels:
     app.kubernetes.io/name: mneme
     app.kubernetes.io/component: core
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "1.0.0"
 spec:
   serviceName: mneme-core
   replicas: 1    # Core is a single Raft leader — do not increase
@@ -152,7 +152,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: mneme-core
-          image: mnemelabs/core:0.1.0
+          image: mnemelabs/core:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/mneme-core"]
           args: ["--config", "/etc/mneme/mneme.toml"]

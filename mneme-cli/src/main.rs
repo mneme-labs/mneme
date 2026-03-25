@@ -72,6 +72,72 @@ fn dirs_home() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
+// ── Auth token cache ────────────────────────────────────────────────────────
+// Tokens returned by the server after credential auth are cached under
+// ~/.mneme/tokens/<host_hash>.tok so that repeat CLI invocations reuse the
+// token and skip the expensive PBKDF2 password round-trip on the server.
+// The cache file stores the raw token string; it is silently discarded on
+// expiry or any parse error.
+
+fn token_cache_path(host: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    // Use a stable, filesystem-safe hash of the host string as the filename.
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    host.hash(&mut hasher);
+    let h = hasher.finish();
+    let mut p = dirs_home();
+    p.push(".mneme");
+    p.push("tokens");
+    p.push(format!("{h:016x}.tok"));
+    p
+}
+
+/// Minimal claims subset for expiry pre-check (no HMAC verification needed).
+#[derive(serde::Deserialize)]
+struct CachedClaims {
+    exp: u64,
+}
+
+fn load_cached_token(host: &str) -> Option<String> {
+    let path = token_cache_path(host);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let token = raw.trim().to_string();
+    if token.is_empty() { return None; }
+    // Quick expiry pre-check: decode the claims portion without verifying the HMAC.
+    // The server will reject an expired token anyway; this avoids one wasted round-trip.
+    if let Some(payload_b64) = token.split('.').next() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        if let Ok(bytes) = URL_SAFE_NO_PAD.decode(payload_b64) {
+            if let Ok(claims) = rmp_serde::from_slice::<CachedClaims>(&bytes) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                // Give a 60s margin so we don't hand an about-to-expire token to the server.
+                if claims.exp <= now + 60 {
+                    let _ = std::fs::remove_file(&path);
+                    return None;
+                }
+            }
+        }
+    }
+    Some(token)
+}
+
+fn save_cached_token(host: &str, token: &str) {
+    let path = token_cache_path(host);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, token);
+    // Restrict token file permissions to owner-only (best effort on non-Unix).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
 fn load_profiles() -> Result<ProfileFile> {
     let path = profiles_path();
     if !path.exists() {
@@ -1522,28 +1588,61 @@ fn parse_host_port(addr: &str) -> Result<(String, u16)> {
 // ── auth ───────────────────────────────────────────────────────────────────────
 
 /// Authenticate and return; used for all commands except auth-token.
+///
+/// Auth priority:
+///   1. Explicit `--token` flag (sent as-is, no cache lookup).
+///   2. Cached token from `~/.mneme/tokens/<host>.tok` (avoids PBKDF2 on repeat invocations).
+///   3. Username + password credentials (triggers PBKDF2 on the server; returned token is cached).
 async fn authenticate(conn: &mut Conn, eff: &EffectiveConfig) -> Result<()> {
-    let payload = if let Some(token) = &eff.token {
-        rmp_serde::to_vec(token)?
-    } else if let (Some(user), Some(pass)) = (&eff.username, &eff.password) {
-        rmp_serde::to_vec(&(user.as_str(), pass.as_str()))?
-    } else {
-        bail!("Authentication required: provide --token (-t) or --username (-u) + --password (-p), or configure a profile with `mneme-cli profile-set`");
-    };
-
-    let frame = Frame {
-        cmd_id: CmdId::Auth,
-        flags: 0,
-        req_id: 0,
-        payload: Bytes::from(payload),
-    };
-    let resp = send_recv(conn, frame).await?;
-    if resp.cmd_id != CmdId::Ok {
-        let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
-        bail!("AUTH failed: {msg}");
+    // ── 1. Explicit token ─────────────────────────────────────────────────
+    if let Some(token) = &eff.token {
+        let payload = rmp_serde::to_vec(token)?;
+        let resp = send_recv(conn, Frame { cmd_id: CmdId::Auth, flags: 0, req_id: 0,
+            payload: Bytes::from(payload) }).await?;
+        if resp.cmd_id != CmdId::Ok {
+            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+            bail!("AUTH failed: {msg}");
+        }
+        debug!("Authenticated via explicit token");
+        return Ok(());
     }
-    debug!("Authenticated");
-    Ok(())
+
+    // ── 2. Cached token (fast path — skips PBKDF2 on server) ─────────────
+    if eff.username.is_some() || eff.password.is_some() {
+        if let Some(cached) = load_cached_token(&eff.host) {
+            let payload = rmp_serde::to_vec(&cached)?;
+            let resp = send_recv(conn, Frame { cmd_id: CmdId::Auth, flags: 0, req_id: 0,
+                payload: Bytes::from(payload) }).await?;
+            if resp.cmd_id == CmdId::Ok {
+                debug!("Authenticated via cached token");
+                return Ok(());
+            }
+            // Cached token was rejected (expired or revoked) — fall through to credentials.
+            debug!("Cached token rejected, falling back to credentials");
+        }
+    }
+
+    // ── 3. Username + password (slow path — PBKDF2 on server; cache result) ─
+    if let (Some(user), Some(pass)) = (&eff.username, &eff.password) {
+        let payload = rmp_serde::to_vec(&(user.as_str(), pass.as_str()))?;
+        let resp = send_recv(conn, Frame { cmd_id: CmdId::Auth, flags: 0, req_id: 0,
+            payload: Bytes::from(payload) }).await?;
+        if resp.cmd_id != CmdId::Ok {
+            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+            bail!("AUTH failed: {msg}");
+        }
+        // Server echoes back the session token in the Ok payload for credential auth.
+        // Cache it so the next invocation takes the fast token path.
+        if let Ok(returned_token) = rmp_serde::from_slice::<String>(&resp.payload) {
+            if !returned_token.is_empty() && returned_token != "OK" {
+                save_cached_token(&eff.host, &returned_token);
+                debug!("Authenticated via credentials; token cached");
+            }
+        }
+        return Ok(());
+    }
+
+    bail!("Authentication required: provide --token (-t) or --username (-u) + --password (-p), or configure a profile with `mneme-cli profile-set`");
 }
 
 /// Authenticate with username+password and return the session token string.

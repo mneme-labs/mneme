@@ -47,14 +47,14 @@ Mneme is a distributed in-memory cache designed for sub-millisecond reads. It us
 ### Docker — Solo mode (30 seconds)
 
 ```bash
-docker pull mnemelabs/core:0.1.0
+docker pull mnemelabs/core:1.0.0
 
 docker run -d \
   --name mneme \
   -p 6379:6379 -p 9090:9090 \
   -e MNEME_ADMIN_PASSWORD=secret \
   -v mneme-data:/var/lib/mneme \
-  mnemelabs/core:0.1.0
+  mnemelabs/core:1.0.0
 
 # Wait ~10s for TLS bootstrap, then:
 docker exec mneme mneme-cli -u admin -p secret ping
@@ -165,22 +165,22 @@ mneme-cli -u admin -p secret --consistency ALL set key value
 
 | Image | Description | Ports |
 |-------|-------------|-------|
-| `mnemelabs/core:0.1.0` | Core node (solo / cluster / HA) | 6379, 7379, 9090 |
-| `mnemelabs/keeper:0.1.0` | Keeper node (persistence) | 7379, 9090 |
-| `mnemelabs/cli:0.1.0` | CLI management tool | — |
+| `mnemelabs/core:1.0.0` | Core node (solo / cluster / HA) | 6379, 7379, 9090 |
+| `mnemelabs/keeper:1.0.0` | Keeper node (persistence) | 7379, 9090 |
+| `mnemelabs/cli:1.0.0` | CLI management tool | — |
 
 Build locally from source:
 
 ```bash
 # Build individual images
-docker build --target core   -t mnemelabs/core:0.1.0   .
-docker build --target keeper -t mnemelabs/keeper:0.1.0 .
-docker build --target cli    -t mnemelabs/cli:0.1.0    .
+docker build --target core   -t mnemelabs/core:1.0.0   .
+docker build --target keeper -t mnemelabs/keeper:1.0.0 .
+docker build --target cli    -t mnemelabs/cli:1.0.0    .
 
 # Push all (logged in as mnemelabs)
-docker push mnemelabs/core:0.1.0
-docker push mnemelabs/keeper:0.1.0
-docker push mnemelabs/cli:0.1.0
+docker push mnemelabs/core:1.0.0
+docker push mnemelabs/keeper:1.0.0
+docker push mnemelabs/cli:1.0.0
 ```
 
 ---
@@ -192,7 +192,7 @@ Use `docker-compose.prod.yml` on top of the base compose for resource limits, re
 ```bash
 # HA-full topology with production overrides
 MNEME_ADMIN_PASSWORD=$(openssl rand -hex 16) \
-MNEME_VERSION=0.1.0 \
+MNEME_VERSION=1.0.0 \
 CORE_MEM_LIMIT=16g \
 KEEPER_MEM_LIMIT=8g \
   docker compose \

@@ -29,7 +29,7 @@
 #   TOPOLOGY=replica CORE_ADDR=10.0.0.1:7379 ./scripts/setup-docker.sh
 #
 # Environment overrides:
-#   MNEME_IMAGE     Full image reference (default: mnemelabs/core:0.1.0)
+#   MNEME_IMAGE     Full image reference (default: mnemelabs/core:1.0.0)
 #   SKIP_BUILD      Set to 1 to skip docker build
 #   KEEPER_COUNT    Number of Keeper containers (default: 3 for cluster)
 #   CORE_ADDR       External Core address for keeper topology (host:port)
@@ -41,7 +41,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-MNEME_IMAGE="${MNEME_IMAGE:-mnemelabs/core:0.1.0}"
+MNEME_IMAGE="${MNEME_IMAGE:-mnemelabs/core:1.0.0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 KEEPER_COUNT="${KEEPER_COUNT:-3}"
 CORE_ADDR="${CORE_ADDR:-}"
@@ -177,12 +177,12 @@ if [[ "$SKIP_BUILD" == "1" ]]; then
   info "Using existing image: ${MNEME_IMAGE}"
 else
   step "Building Docker images"
-  info "Building mnemelabs/core:0.1.0 …"
-  docker build --target core   -t mnemelabs/core:0.1.0   "${REPO_ROOT}"
-  info "Building mnemelabs/keeper:0.1.0 …"
-  docker build --target keeper -t mnemelabs/keeper:0.1.0 "${REPO_ROOT}"
-  info "Building mnemelabs/cli:0.1.0 …"
-  docker build --target cli    -t mnemelabs/cli:0.1.0    "${REPO_ROOT}"
+  info "Building mnemelabs/core:1.0.0 …"
+  docker build --target core   -t mnemelabs/core:1.0.0   "${REPO_ROOT}"
+  info "Building mnemelabs/keeper:1.0.0 …"
+  docker build --target keeper -t mnemelabs/keeper:1.0.0 "${REPO_ROOT}"
+  info "Building mnemelabs/cli:1.0.0 …"
+  docker build --target cli    -t mnemelabs/cli:1.0.0    "${REPO_ROOT}"
   success "All images built."
 fi
 
@@ -211,7 +211,7 @@ if [[ "$TOPOLOGY" == "keeper" ]]; then
       REP_PORT=$((7379 + i))
       MET_PORT=$((9090 + i))
       echo "  mneme-keeper-${i}:"
-      echo "    image: \${MNEME_IMAGE:-mnemelabs/core:0.1.0}"
+      echo "    image: \${MNEME_IMAGE:-mnemelabs/core:1.0.0}"
       echo "    restart: unless-stopped"
       echo "    environment:"
       echo "      MNEME_CLUSTER_SECRET: \${MNEME_CLUSTER_SECRET}"
@@ -242,7 +242,7 @@ elif [[ "$TOPOLOGY" == "replica" ]]; then
     echo "  mneme-core:"
     echo "    profiles: [disabled]"
     echo "  mneme-replica-0:"
-    echo "    image: \${MNEME_IMAGE:-mnemelabs/core:0.1.0}"
+    echo "    image: \${MNEME_IMAGE:-mnemelabs/core:1.0.0}"
     echo "    restart: unless-stopped"
     echo "    environment:"
     echo "      MNEME_CLUSTER_SECRET: \${MNEME_CLUSTER_SECRET}"

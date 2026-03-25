@@ -49,12 +49,24 @@ pub struct Argus {
     secret: Vec<u8>,
     /// Revoked token jtis. Production would TTL-prune this; here it is
     /// bounded by `max_blacklist` entries (oldest removed when full).
-    blacklist: Mutex<HashSet<u64>>,
+    blacklist: Arc<Mutex<HashSet<u64>>>,
     max_blacklist: usize,
     /// Session token TTL in seconds (default 86 400 = 24 h).
     token_ttl_secs: u64,
     /// User credentials store (PBKDF2-SHA256).
     users: Arc<UsersDb>,
+}
+
+impl Clone for Argus {
+    fn clone(&self) -> Self {
+        Self {
+            secret: self.secret.clone(),
+            blacklist: self.blacklist.clone(),
+            max_blacklist: self.max_blacklist,
+            token_ttl_secs: self.token_ttl_secs,
+            users: self.users.clone(),
+        }
+    }
 }
 
 impl Argus {
@@ -70,7 +82,7 @@ impl Argus {
     pub fn with_config(secret: impl AsRef<[u8]>, db: UsersDb, token_ttl_secs: u64) -> Self {
         Self {
             secret: secret.as_ref().to_vec(),
-            blacklist: Mutex::new(HashSet::new()),
+            blacklist: Arc::new(Mutex::new(HashSet::new())),
             max_blacklist: 65_536,
             token_ttl_secs,
             users: Arc::new(db),

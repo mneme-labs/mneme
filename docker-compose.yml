@@ -32,27 +32,29 @@
 # =============================================================================
 #
 # Environment variables:
-#   MNEME_VERSION          Image tag (default: 0.1.0)
+#   MNEME_VERSION          Image tag (default: 1.0.0)
 #   MNEME_ADMIN_PASSWORD   Admin password (default: "secret")
+#   MNEME_CLUSTER_SECRET   Shared join token for Keeper/replica auth — change in production!
 #   MNEME_POOL_BYTES       Hot RAM pool size (default: "512mb")
 #   MNEME_LOG_LEVEL        Log verbosity: trace|debug|info|warn|error (default: info)
 
 # ── Build anchors ─────────────────────────────────────────────────────────────
 x-core-build: &core-build
-  image: mnemelabs/core:${MNEME_VERSION:-0.1.0}
+  image: mnemelabs/core:${MNEME_VERSION:-1.0.0}
   build:
     context: .
     target: core
 
 x-keeper-build: &keeper-build
-  image: mnemelabs/keeper:${MNEME_VERSION:-0.1.0}
+  image: mnemelabs/keeper:${MNEME_VERSION:-1.0.0}
   build:
     context: .
     target: keeper
 
 x-common-env: &common-env
-  MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
-  MNEME_LOG_LEVEL:      ${MNEME_LOG_LEVEL:-info}
+  MNEME_ADMIN_PASSWORD:  ${MNEME_ADMIN_PASSWORD:-secret}
+  MNEME_CLUSTER_SECRET:  ${MNEME_CLUSTER_SECRET:-docker-dev-secret-change-in-production}
+  MNEME_LOG_LEVEL:       ${MNEME_LOG_LEVEL:-info}
 
 x-healthcheck: &healthcheck
   test: ["CMD", "curl", "-sf", "http://127.0.0.1:9090/metrics"]
@@ -118,10 +120,10 @@ services:
     user: root
     environment:
       <<: *common-env
-      KEEPER_NODE_ID: keeper-1
-      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
-      CORE_ADDR: mneme-core:7379
-      MNEME_CONFIG: /etc/mneme/keeper-1.toml
+      MNEME_KEEPER_ID:   keeper-1
+      MNEME_POOL_BYTES:  ${KEEPER_POOL_BYTES:-2gb}
+      MNEME_CORE_ADDR:   mneme-core:7379
+      MNEME_CONFIG:      /etc/mneme/keeper-1.toml
     depends_on:
       mneme-core:
         condition: service_started
@@ -144,10 +146,10 @@ services:
     user: root
     environment:
       <<: *common-env
-      KEEPER_NODE_ID: keeper-2
-      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
-      CORE_ADDR: mneme-core:7379
-      MNEME_CONFIG: /etc/mneme/keeper-2.toml
+      MNEME_KEEPER_ID:   keeper-2
+      MNEME_POOL_BYTES:  ${KEEPER_POOL_BYTES:-2gb}
+      MNEME_CORE_ADDR:   mneme-core:7379
+      MNEME_CONFIG:      /etc/mneme/keeper-2.toml
     depends_on:
       mneme-core:
         condition: service_started
@@ -170,10 +172,10 @@ services:
     user: root
     environment:
       <<: *common-env
-      KEEPER_NODE_ID: keeper-3
-      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
-      CORE_ADDR: mneme-core:7379
-      MNEME_CONFIG: /etc/mneme/keeper-3.toml
+      MNEME_KEEPER_ID:   keeper-3
+      MNEME_POOL_BYTES:  ${KEEPER_POOL_BYTES:-2gb}
+      MNEME_CORE_ADDR:   mneme-core:7379
+      MNEME_CONFIG:      /etc/mneme/keeper-3.toml
     depends_on:
       mneme-core:
         condition: service_started
@@ -198,8 +200,8 @@ services:
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     environment:
       <<: *common-env
-      CORE_ADDR: mneme-core:7379
-      MNEME_CONFIG: /etc/mneme/replica.toml
+      MNEME_CORE_ADDR:  mneme-core:7379
+      MNEME_CONFIG:     /etc/mneme/replica.toml
     depends_on:
       mneme-core:
         condition: service_healthy
@@ -224,8 +226,8 @@ services:
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     environment:
       <<: *common-env
-      CORE_ADDR: mneme-core:7379
-      MNEME_CONFIG: /etc/mneme/replica-2.toml
+      MNEME_CORE_ADDR:  mneme-core:7379
+      MNEME_CONFIG:     /etc/mneme/replica-2.toml
     depends_on:
       mneme-core:
         condition: service_healthy
@@ -329,10 +331,10 @@ services:
     user: root
     environment:
       <<: *common-env
-      KEEPER_NODE_ID: ha-keeper-1
-      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
-      CORE_ADDR: mneme-core-1:7379
-      MNEME_CONFIG: /etc/mneme/keeper-1.toml
+      MNEME_KEEPER_ID:   ha-keeper-1
+      MNEME_POOL_BYTES:  ${KEEPER_POOL_BYTES:-2gb}
+      MNEME_CORE_ADDR:   mneme-core-1:7379
+      MNEME_CONFIG:      /etc/mneme/keeper-1.toml
     depends_on:
       mneme-core-1:
         condition: service_started
@@ -354,10 +356,10 @@ services:
     user: root
     environment:
       <<: *common-env
-      KEEPER_NODE_ID: ha-keeper-2
-      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
-      CORE_ADDR: mneme-core-1:7379
-      MNEME_CONFIG: /etc/mneme/keeper-2.toml
+      MNEME_KEEPER_ID:   ha-keeper-2
+      MNEME_POOL_BYTES:  ${KEEPER_POOL_BYTES:-2gb}
+      MNEME_CORE_ADDR:   mneme-core-1:7379
+      MNEME_CONFIG:      /etc/mneme/keeper-2.toml
     depends_on:
       mneme-core-1:
         condition: service_started
@@ -383,8 +385,8 @@ services:
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     environment:
       <<: *common-env
-      CORE_ADDR: mneme-core-1:7379
-      MNEME_CONFIG: /etc/mneme/replica-ha-1.toml
+      MNEME_CORE_ADDR:  mneme-core-1:7379
+      MNEME_CONFIG:     /etc/mneme/replica-ha-1.toml
     depends_on:
       mneme-core-1:
         condition: service_healthy
@@ -409,8 +411,8 @@ services:
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     environment:
       <<: *common-env
-      CORE_ADDR: mneme-core-1:7379
-      MNEME_CONFIG: /etc/mneme/replica-ha-2.toml
+      MNEME_CORE_ADDR:  mneme-core-1:7379
+      MNEME_CONFIG:     /etc/mneme/replica-ha-2.toml
     depends_on:
       mneme-core-1:
         condition: service_healthy

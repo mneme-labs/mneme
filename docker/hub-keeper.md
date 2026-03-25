@@ -31,7 +31,7 @@ docker run -d \
   -e MNEME_ADMIN_PASSWORD=secret \
   -e MNEME_CLUSTER_SECRET=change-me \
   -v core-data:/var/lib/mneme \
-  mnemelabs/core:0.1.0
+  mnemelabs/core:1.0.0
 ```
 
 ### Step 2 — attach a Keeper
@@ -44,7 +44,7 @@ docker run -d \
   -e MNEME_CORE_ADDR=mneme-core:7379 \
   -e MNEME_KEEPER_ID=keeper-1 \
   -v keeper1-data:/var/lib/mneme \
-  mnemelabs/keeper:0.1.0
+  mnemelabs/keeper:1.0.0
 ```
 
 The Keeper connects to Core on port 7379 (mTLS), registers via Herold, and immediately begins receiving replication frames.
@@ -56,7 +56,7 @@ The Keeper connects to Core on port 7379 (mTLS), registers via Herold, and immed
 ```yaml
 services:
   mneme-core:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-core
     entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
     user: root
@@ -73,7 +73,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-1:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-1
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -88,7 +88,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-2:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-2
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -103,7 +103,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-3:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-3
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root

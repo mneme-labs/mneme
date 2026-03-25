@@ -124,7 +124,7 @@ metadata:
   labels:
     app.kubernetes.io/name: mneme
     app.kubernetes.io/component: replica
-    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/version: "1.0.0"
 spec:
   serviceName: mneme-replica
   replicas: 2
@@ -180,7 +180,7 @@ spec:
               mountPath: /etc/mneme
       containers:
         - name: mneme-replica
-          image: mnemelabs/core:0.1.0
+          image: mnemelabs/core:1.0.0
           imagePullPolicy: IfNotPresent
           command: ["/usr/local/bin/mneme-core"]
           args: ["--config", "/etc/mneme/replica.toml"]

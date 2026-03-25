@@ -73,7 +73,7 @@ The node is ready when the health check passes and `ping` returns `PONG`.
 ### Single-platform build (fastest)
 
 ```bash
-docker build -t mnemelabs/core:0.1.0 .
+docker build -t mnemelabs/core:1.0.0 .
 ```
 
 The multi-stage Dockerfile uses cargo-chef for dependency caching. Subsequent
@@ -83,14 +83,14 @@ builds after a source-only change take seconds, not minutes.
 
 ```bash
 # Build each component image separately
-docker build --target core   -t mnemelabs/core:0.1.0   .
-docker build --target keeper -t mnemelabs/keeper:0.1.0 .
-docker build --target cli    -t mnemelabs/cli:0.1.0    .
+docker build --target core   -t mnemelabs/core:1.0.0   .
+docker build --target keeper -t mnemelabs/keeper:1.0.0 .
+docker build --target cli    -t mnemelabs/cli:1.0.0    .
 
 # Push to registry
-docker push mnemelabs/core:0.1.0
-docker push mnemelabs/keeper:0.1.0
-docker push mnemelabs/cli:0.1.0
+docker push mnemelabs/core:1.0.0
+docker push mnemelabs/keeper:1.0.0
+docker push mnemelabs/cli:1.0.0
 ```
 
 ### Development image
@@ -919,7 +919,7 @@ docker compose --profile full down -v
 ### Remove the built image
 
 ```bash
-docker rmi mnemelabs/core:0.1.0
+docker rmi mnemelabs/core:1.0.0
 ```
 
 ### Full cleanup (containers, volumes, networks, images)

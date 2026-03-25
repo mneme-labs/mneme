@@ -726,7 +726,7 @@ impl Mnemosyne {
             // Auth gate
             if !authenticated {
                 let req_id = frame.req_id;
-                let (mut resp, maybe_claims) = self.handle_auth_frame(&frame);
+                let (mut resp, maybe_claims) = self.handle_auth_frame(&frame).await;
                 let ok = resp.cmd_id == CmdId::Ok;
                 resp.req_id = req_id;
                 stream.write_all(&resp.encode()).await?;
@@ -837,11 +837,16 @@ impl Mnemosyne {
     /// Returns `(response_frame, Option<Claims>)`:
     ///   - `Some(claims)` when auth succeeded — caller uses claims for RBAC state.
     ///   - `None` when auth failed (response is an Error frame).
-    fn handle_auth_frame(&self, frame: &Frame) -> (Frame, Option<Claims>) {
+    ///
+    /// Token path (HMAC-SHA256 verify) runs inline — it is sub-microsecond.
+    /// Credential path (PBKDF2-SHA256 verify) is CPU-bound and must not block
+    /// the tokio runtime: it is dispatched to a blocking thread via
+    /// `spawn_blocking` and awaited before returning.
+    async fn handle_auth_frame(&self, frame: &Frame) -> (Frame, Option<Claims>) {
         if frame.cmd_id != CmdId::Auth {
             return (Frame::error_response("NOAUTH authentication required"), None);
         }
-        // Try token-based auth first (payload is a msgpack-encoded String token).
+        // ── Token-based auth (fast path: HMAC-SHA256 only) ────────────────────
         if let Ok(token) = rmp_serde::from_slice::<String>(&frame.payload) {
             if let Ok(claims) = self.argus.verify(&token) {
                 let resp = Frame::ok_response(Bytes::from(
@@ -849,14 +854,18 @@ impl Mnemosyne {
                 return (resp, Some(claims));
             }
         }
-        // Try credentials tuple (username, password).
+        // ── Credential-based auth (slow path: PBKDF2 — must not block runtime) ─
         if let Ok((user, pass)) = rmp_serde::from_slice::<(String, String)>(&frame.payload) {
-            match self.argus.auth_user(&user, &pass) {
-                Ok((token, claims)) => {
+            let argus = self.argus.clone();
+            let result = tokio::task::spawn_blocking(move || argus.auth_user(&user, &pass))
+                .await;
+            match result {
+                Ok(Ok((token, claims))) => {
                     let payload = rmp_serde::to_vec(&token).unwrap_or_default();
                     return (Frame::ok_response(Bytes::from(payload)), Some(claims));
                 }
-                Err(e) => return (Frame::error_response(&format!("AUTH failed: {e}")), None),
+                Ok(Err(e)) => return (Frame::error_response(&format!("AUTH failed: {e}")), None),
+                Err(_)     => return (Frame::error_response("AUTH: internal error"), None),
             }
         }
         (Frame::error_response("AUTH: malformed payload"), None)

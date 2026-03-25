@@ -173,7 +173,7 @@ docker run -d \
   -p 9090:9090 \
   -e MNEME_ADMIN_PASSWORD=secret \
   -v mneme-data:/var/lib/mneme \
-  mnemelabs/core:0.1.0
+  mnemelabs/core:1.0.0
 ```
 
 Wait about 10 seconds for startup, then connect:
@@ -340,7 +340,7 @@ Configure and manage services manually following Section 4.
 
 ```bash
 # Production runtime (default -- ~30 MB)
-docker build -t mnemelabs/core:0.1.0 .
+docker build -t mnemelabs/core:1.0.0 .
 
 # Development image (full Rust toolchain + cargo-watch)
 docker build --target dev -t mnemelabs/core:dev .

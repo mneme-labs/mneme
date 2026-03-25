@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-MNEME_VERSION="${MNEME_VERSION:-0.1.0-dev}"
+MNEME_VERSION="${MNEME_VERSION:-1.0.0-dev}"
 
 # ── Terminal colour detection ──────────────────────────────────────────────────
 # Only enable colours when:

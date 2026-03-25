@@ -125,13 +125,13 @@ volumeClaimTemplates:
 
 ### Image
 
-Replace `mnemelabs/core:0.1.0` with your registry tag:
+Replace `mnemelabs/core:1.0.0` with your registry tag:
 
 ```bash
 docker build --target core -t registry.example.com/mnemelabs/core:1.0.0 .
 docker push registry.example.com/mnemelabs/core:1.0.0
 
-sed -i 's|mnemelabs/core:0.1.0|registry.example.com/mnemelabs/core:1.0.0|g' k8s/*.yaml
+sed -i 's|mnemelabs/core:1.0.0|registry.example.com/mnemelabs/core:1.0.0|g' k8s/*.yaml
 ```
 
 ## Architecture in Kubernetes

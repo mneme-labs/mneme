@@ -35,7 +35,7 @@ Or without the repo:
 # docker-compose.yml
 services:
   mneme:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-solo
     entrypoint: ["/bin/bash", "/docker/entrypoint-solo.sh"]
     user: root
@@ -79,7 +79,7 @@ Standalone compose:
 # docker-compose.yml
 services:
   mneme-core:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-core
     entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
     user: root
@@ -96,7 +96,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-1:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-1
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -111,7 +111,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-2:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-2
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -126,7 +126,7 @@ services:
     restart: unless-stopped
 
   mneme-keeper-3:
-    image: mnemelabs/keeper:0.1.0
+    image: mnemelabs/keeper:1.0.0
     container_name: mneme-keeper-3
     entrypoint: ["/bin/bash", "/docker/entrypoint-keeper.sh"]
     user: root
@@ -162,7 +162,7 @@ Add these services to the cluster compose above:
 
 ```yaml
   mneme-replica-1:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-replica-1
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     user: root
@@ -180,7 +180,7 @@ Add these services to the cluster compose above:
     restart: unless-stopped
 
   mneme-replica-2:
-    image: mnemelabs/core:0.1.0
+    image: mnemelabs/core:1.0.0
     container_name: mneme-replica-2
     entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
     user: root
@@ -255,7 +255,7 @@ Use `docker-compose.prod.yml` for resource limits, memory caps, and log rotation
 
 ```bash
 MNEME_ADMIN_PASSWORD=$(openssl rand -hex 16) \
-MNEME_VERSION=0.1.0 \
+MNEME_VERSION=1.0.0 \
 CORE_MEM_LIMIT=16g \
 KEEPER_MEM_LIMIT=8g \
   docker compose \
@@ -274,7 +274,7 @@ KEEPER_MEM_LIMIT=8g \
 | `MNEME_CLUSTER_SECRET` | — | Shared secret for Keeper join auth (cluster / HA) |
 | `MNEME_POOL_BYTES` | `512mb` | Hot RAM pool size (`512mb`, `2gb`, `8gb`, …) |
 | `MNEME_LOG_LEVEL` | `info` | Log verbosity: `trace` / `debug` / `info` / `warn` / `error` |
-| `MNEME_VERSION` | `0.1.0` | Image tag |
+| `MNEME_VERSION` | `1.0.0` | Image tag |
 | `MNEME_NODE_ID` | hostname | Raft / cluster node identifier |
 
 ---
@@ -306,6 +306,6 @@ docker compose down -v
 
 | Image | Description |
 |-------|-------------|
-| `mnemelabs/core:0.1.0` | Core node — solo / cluster / HA / replica mode |
-| `mnemelabs/keeper:0.1.0` | Keeper node — WAL + snapshots + cold store |
-| `mnemelabs/cli:0.1.0` | CLI tool — standalone management client |
+| `mnemelabs/core:1.0.0` | Core node — solo / cluster / HA / replica mode |
+| `mnemelabs/keeper:1.0.0` | Keeper node — WAL + snapshots + cold store |
+| `mnemelabs/cli:1.0.0` | CLI tool — standalone management client |

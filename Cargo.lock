@@ -1093,7 +1093,7 @@ dependencies = [
 
 [[package]]
 name = "mneme-bench"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -1106,9 +1106,10 @@ dependencies = [
 
 [[package]]
 name = "mneme-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64",
  "bytes",
  "clap",
  "mneme-common",
@@ -1126,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "mneme-client"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1145,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "mneme-common"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
@@ -1165,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "mneme-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash 0.8.12",
  "anyhow",
@@ -1208,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "mneme-keeper"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",

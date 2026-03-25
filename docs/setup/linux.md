@@ -813,7 +813,7 @@ Example using `ufw` on Core:
 
 ```bash
 sudo ufw allow from any to any port 6379 proto tcp comment "MnemeCache client"
-sudo ufw allow from 10.0.1.0/24 to any port 7379 proto tcp comment "MnemeCache replication"
+sudo ufw allow from 10.1.0.0/24 to any port 7379 proto tcp comment "MnemeCache replication"
 sudo ufw allow from 10.0.1.30 to any port 9090 proto tcp comment "Prometheus scrape"
 ```
 
@@ -821,7 +821,7 @@ Example using `firewall-cmd` (RHEL/Fedora):
 
 ```bash
 sudo firewall-cmd --permanent --add-port=6379/tcp
-sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.1.0/24" port port="7379" protocol="tcp" accept'
+sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.1.0.0/24" port port="7379" protocol="tcp" accept'
 sudo firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="10.0.1.30" port port="9090" protocol="tcp" accept'
 sudo firewall-cmd --reload
 ```
