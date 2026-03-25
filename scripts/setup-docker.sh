@@ -183,8 +183,6 @@ else
   docker build --target keeper -t mnemelabs/keeper:0.1.0 "${REPO_ROOT}"
   info "Building mnemelabs/cli:0.1.0 …"
   docker build --target cli    -t mnemelabs/cli:0.1.0    "${REPO_ROOT}"
-  info "Building mnemelabs/bench:0.1.0 …"
-  docker build --target bench  -t mnemelabs/bench:0.1.0  "${REPO_ROOT}"
   success "All images built."
 fi
 

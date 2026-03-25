@@ -86,13 +86,11 @@ builds after a source-only change take seconds, not minutes.
 docker build --target core   -t mnemelabs/core:0.1.0   .
 docker build --target keeper -t mnemelabs/keeper:0.1.0 .
 docker build --target cli    -t mnemelabs/cli:0.1.0    .
-docker build --target bench  -t mnemelabs/bench:0.1.0  .
 
 # Push to registry
 docker push mnemelabs/core:0.1.0
 docker push mnemelabs/keeper:0.1.0
 docker push mnemelabs/cli:0.1.0
-docker push mnemelabs/bench:0.1.0
 ```
 
 ### Development image

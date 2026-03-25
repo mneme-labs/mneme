@@ -5,22 +5,14 @@
 #   mnemelabs/core    — mneme-core (solo + cluster + HA)
 #   mnemelabs/keeper  — mneme-keeper (persistence node)
 #   mnemelabs/cli     — mneme-cli (management tool)
-#   mnemelabs/bench   — mneme-bench (load testing)
 #
 # Build individual images:
 #   docker build --target core   -t mnemelabs/core:0.1.0   .
 #   docker build --target keeper -t mnemelabs/keeper:0.1.0 .
 #   docker build --target cli    -t mnemelabs/cli:0.1.0    .
-#   docker build --target bench  -t mnemelabs/bench:0.1.0  .
 #
 # Build all at once (via docker-compose):
 #   docker compose build
-#
-# Build each image:
-#   docker build --target core   -t mnemelabs/core:0.1.0   .
-#   docker build --target keeper -t mnemelabs/keeper:0.1.0 .
-#   docker build --target cli    -t mnemelabs/cli:0.1.0    .
-#   docker build --target bench  -t mnemelabs/bench:0.1.0  .
 # =============================================================================
 
 # Latest stable Rust on Debian 12 (bookworm) — tracks stable channel, not nightly
@@ -174,14 +166,3 @@ WORKDIR /var/lib/mneme
 ENTRYPOINT ["mneme-cli"]
 CMD ["--help"]
 
-# ── mnemelabs/bench ───────────────────────────────────────────────────────────
-# Load testing tool. Targets any running Core or replica.
-FROM base-runtime AS bench
-
-COPY --from=builder /build/target/release/mneme-bench /usr/local/bin/
-
-USER mneme
-WORKDIR /var/lib/mneme
-
-ENTRYPOINT ["mneme-bench"]
-CMD ["--help"]

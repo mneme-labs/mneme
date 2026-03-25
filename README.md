@@ -168,7 +168,6 @@ mneme-cli -u admin -p secret --consistency ALL set key value
 | `mnemelabs/core:0.1.0` | Core node (solo / cluster / HA) | 6379, 7379, 9090 |
 | `mnemelabs/keeper:0.1.0` | Keeper node (persistence) | 7379, 9090 |
 | `mnemelabs/cli:0.1.0` | CLI management tool | — |
-| `mnemelabs/bench:0.1.0` | Load testing tool | — |
 
 Build locally from source:
 
@@ -177,13 +176,11 @@ Build locally from source:
 docker build --target core   -t mnemelabs/core:0.1.0   .
 docker build --target keeper -t mnemelabs/keeper:0.1.0 .
 docker build --target cli    -t mnemelabs/cli:0.1.0    .
-docker build --target bench  -t mnemelabs/bench:0.1.0  .
 
 # Push all (logged in as mnemelabs)
 docker push mnemelabs/core:0.1.0
 docker push mnemelabs/keeper:0.1.0
 docker push mnemelabs/cli:0.1.0
-docker push mnemelabs/bench:0.1.0
 ```
 
 ---
