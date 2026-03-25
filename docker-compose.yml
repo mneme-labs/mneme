@@ -1,0 +1,518 @@
+# Mneme — Docker Compose
+# =============================================================================
+#  TOPOLOGIES
+#
+#  SOLO  — single node (Core + embedded persistence, no external keepers)
+#    docker compose --profile solo up -d
+#
+#  CLUSTER  — Core + 2 Keepers
+#    docker compose --profile cluster up -d
+#
+#  CLUSTER + REPLICAS  — Core + 2 Keepers + 2 Read Replicas
+#    docker compose --profile cluster --profile replica up -d
+#
+#  HA  — 3-Core Raft cluster + 2 Keepers (automatic leader failover)
+#    docker compose --profile ha up -d
+#
+#  HA-FULL  — HA + 2 HA-aware Replicas + Prometheus + Grafana
+#    docker compose --profile ha-full up -d
+#
+#  FULL  — Core + 3 Keepers + 2 Replicas + Prometheus + Grafana
+#    docker compose --profile full up -d
+#
+#  MONITORING  — Prometheus + Grafana (attach to running cluster)
+#    docker compose --profile monitoring up -d
+#
+#  TESTS
+#    docker compose --profile cluster --profile cluster-test run --rm smoke-test
+#    docker compose --profile cluster --profile cluster-test run --rm integration-test
+#
+#  TEAR DOWN
+#    docker compose down -v   # remove containers + volumes
+# =============================================================================
+#
+# Environment variables:
+#   MNEME_VERSION          Image tag (default: 0.1.0)
+#   MNEME_ADMIN_PASSWORD   Admin password (default: "secret")
+#   MNEME_POOL_BYTES       Hot RAM pool size (default: "512mb")
+#   MNEME_LOG_LEVEL        Log verbosity: trace|debug|info|warn|error (default: info)
+
+# ── Build anchors ─────────────────────────────────────────────────────────────
+x-core-build: &core-build
+  image: mnemelabs/core:${MNEME_VERSION:-0.1.0}
+  build:
+    context: .
+    target: core
+
+x-keeper-build: &keeper-build
+  image: mnemelabs/keeper:${MNEME_VERSION:-0.1.0}
+  build:
+    context: .
+    target: keeper
+
+x-common-env: &common-env
+  MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
+  MNEME_LOG_LEVEL:      ${MNEME_LOG_LEVEL:-info}
+
+x-healthcheck: &healthcheck
+  test: ["CMD", "curl", "-sf", "http://127.0.0.1:9090/metrics"]
+  interval: 5s
+  timeout: 3s
+  retries: 12
+  start_period: 30s
+
+services:
+  # ── Solo (solo profile) ───────────────────────────────────────────────────
+  # Core + embedded persistence in one container. Best for dev and single-server.
+  mneme-solo:
+    profiles: ["solo"]
+    <<: *core-build
+    container_name: mneme-solo
+    hostname: mneme-solo
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-solo.sh"]
+    environment:
+      <<: *common-env
+      MNEME_POOL_BYTES: ${MNEME_POOL_BYTES:-512mb}
+    volumes:
+      - solo-data:/var/lib/mneme
+    ports:
+      - "${MNEME_HOST_PORT:-6379}:6379"
+      - "${MNEME_HOST_METRICS_PORT:-9090}:9090"
+    networks:
+      - mneme-net
+    healthcheck: *healthcheck
+
+  # ── Core (cluster / full profile) ────────────────────────────────────────
+  mneme-core:
+    profiles: ["cluster", "full"]
+    <<: *core-build
+    container_name: mneme-core
+    hostname: mneme-core
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
+    environment:
+      <<: *common-env
+      MNEME_POOL_BYTES: ${MNEME_POOL_BYTES:-512mb}
+      MNEME_CONFIG: /etc/mneme/core.toml
+    volumes:
+      - core-data:/var/lib/mneme
+      - certs:/certs
+    ports:
+      - "${MNEME_HOST_PORT:-6379}:6379"
+      - "${MNEME_HOST_METRICS_PORT:-9090}:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-core]
+    healthcheck: *healthcheck
+
+  # ── Keeper 1 (cluster / full profile) ────────────────────────────────────
+  mneme-keeper-1:
+    profiles: ["cluster", "full"]
+    <<: *keeper-build
+    container_name: mneme-keeper-1
+    hostname: mneme-keeper-1
+    restart: unless-stopped
+    user: root
+    environment:
+      <<: *common-env
+      KEEPER_NODE_ID: keeper-1
+      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
+      CORE_ADDR: mneme-core:7379
+      MNEME_CONFIG: /etc/mneme/keeper-1.toml
+    depends_on:
+      mneme-core:
+        condition: service_started
+    volumes:
+      - keeper1-data:/var/lib/mneme
+      - certs:/certs:ro
+    ports:
+      - "9091:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-keeper-1]
+
+  # ── Keeper 2 (cluster / full profile) ────────────────────────────────────
+  mneme-keeper-2:
+    profiles: ["cluster", "full"]
+    <<: *keeper-build
+    container_name: mneme-keeper-2
+    hostname: mneme-keeper-2
+    restart: unless-stopped
+    user: root
+    environment:
+      <<: *common-env
+      KEEPER_NODE_ID: keeper-2
+      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
+      CORE_ADDR: mneme-core:7379
+      MNEME_CONFIG: /etc/mneme/keeper-2.toml
+    depends_on:
+      mneme-core:
+        condition: service_started
+    volumes:
+      - keeper2-data:/var/lib/mneme
+      - certs:/certs:ro
+    ports:
+      - "9092:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-keeper-2]
+
+  # ── Keeper 3 (full profile) ───────────────────────────────────────────────
+  mneme-keeper-3:
+    profiles: ["full"]
+    <<: *keeper-build
+    container_name: mneme-keeper-3
+    hostname: mneme-keeper-3
+    restart: unless-stopped
+    user: root
+    environment:
+      <<: *common-env
+      KEEPER_NODE_ID: keeper-3
+      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
+      CORE_ADDR: mneme-core:7379
+      MNEME_CONFIG: /etc/mneme/keeper-3.toml
+    depends_on:
+      mneme-core:
+        condition: service_started
+    volumes:
+      - keeper3-data:/var/lib/mneme
+      - certs:/certs:ro
+    ports:
+      - "9093:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-keeper-3]
+
+  # ── Read Replica 1 (replica / full profile) ───────────────────────────────
+  # EVENTUAL consistency reads only. Syncs PushKey stream from Core.
+  mneme-replica:
+    profiles: ["replica", "full"]
+    <<: *core-build
+    container_name: mneme-replica
+    hostname: mneme-replica
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
+    environment:
+      <<: *common-env
+      CORE_ADDR: mneme-core:7379
+      MNEME_CONFIG: /etc/mneme/replica.toml
+    depends_on:
+      mneme-core:
+        condition: service_healthy
+    volumes:
+      - replica-data:/var/lib/mneme
+      - certs:/certs:ro
+    ports:
+      - "6380:6380"
+      - "9095:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-replica]
+
+  # ── Read Replica 2 (full profile) ────────────────────────────────────────
+  mneme-replica-2:
+    profiles: ["full"]
+    <<: *core-build
+    container_name: mneme-replica-2
+    hostname: mneme-replica-2
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
+    environment:
+      <<: *common-env
+      CORE_ADDR: mneme-core:7379
+      MNEME_CONFIG: /etc/mneme/replica-2.toml
+    depends_on:
+      mneme-core:
+        condition: service_healthy
+    volumes:
+      - replica2-data:/var/lib/mneme
+      - certs:/certs:ro
+    ports:
+      - "6381:6381"
+      - "9096:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-replica-2]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # HA Cluster — 3-Core Raft + 2 Keepers (ha / ha-full profile)
+  # Core-1 bootstraps as the initial Raft leader. All 3 Cores participate in
+  # consensus; any 2 form a quorum. Leader failure triggers automatic election.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  mneme-core-1:
+    profiles: ["ha", "ha-full"]
+    <<: *core-build
+    container_name: mneme-core-1
+    hostname: mneme-core-1
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
+    environment:
+      <<: *common-env
+      MNEME_POOL_BYTES: ${MNEME_POOL_BYTES:-512mb}
+      MNEME_CONFIG: /etc/mneme/core-1.toml
+    volumes:
+      - ha-core1-data:/var/lib/mneme
+      - ha-certs:/certs
+    ports:
+      - "6379:6379"
+      - "9090:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-core-1]
+    healthcheck: *healthcheck
+
+  mneme-core-2:
+    profiles: ["ha", "ha-full"]
+    <<: *core-build
+    container_name: mneme-core-2
+    hostname: mneme-core-2
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
+    environment:
+      <<: *common-env
+      MNEME_POOL_BYTES: ${MNEME_POOL_BYTES:-512mb}
+      MNEME_CONFIG: /etc/mneme/core-2.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_healthy
+    volumes:
+      - ha-core2-data:/var/lib/mneme
+      - ha-certs:/certs
+    ports:
+      - "6382:6379"
+      - "9097:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-core-2]
+    healthcheck: *healthcheck
+
+  mneme-core-3:
+    profiles: ["ha", "ha-full"]
+    <<: *core-build
+    container_name: mneme-core-3
+    hostname: mneme-core-3
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-core.sh"]
+    environment:
+      <<: *common-env
+      MNEME_POOL_BYTES: ${MNEME_POOL_BYTES:-512mb}
+      MNEME_CONFIG: /etc/mneme/core-3.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_healthy
+    volumes:
+      - ha-core3-data:/var/lib/mneme
+      - ha-certs:/certs
+    ports:
+      - "6383:6379"
+      - "9098:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-core-3]
+    healthcheck: *healthcheck
+
+  mneme-ha-keeper-1:
+    profiles: ["ha", "ha-full"]
+    <<: *keeper-build
+    container_name: mneme-ha-keeper-1
+    hostname: mneme-ha-keeper-1
+    restart: unless-stopped
+    user: root
+    environment:
+      <<: *common-env
+      KEEPER_NODE_ID: ha-keeper-1
+      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
+      CORE_ADDR: mneme-core-1:7379
+      MNEME_CONFIG: /etc/mneme/keeper-1.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_started
+    volumes:
+      - ha-keeper1-data:/var/lib/mneme
+      - ha-certs:/certs:ro
+    ports:
+      - "9099:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-ha-keeper-1]
+
+  mneme-ha-keeper-2:
+    profiles: ["ha", "ha-full"]
+    <<: *keeper-build
+    container_name: mneme-ha-keeper-2
+    hostname: mneme-ha-keeper-2
+    restart: unless-stopped
+    user: root
+    environment:
+      <<: *common-env
+      KEEPER_NODE_ID: ha-keeper-2
+      KEEPER_POOL_BYTES: ${KEEPER_POOL_BYTES:-2gb}
+      CORE_ADDR: mneme-core-1:7379
+      MNEME_CONFIG: /etc/mneme/keeper-2.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_started
+    volumes:
+      - ha-keeper2-data:/var/lib/mneme
+      - ha-certs:/certs:ro
+    ports:
+      - "9100:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-ha-keeper-2]
+
+  # ── HA Read Replica 1 (ha-full profile) ──────────────────────────────────
+  # EVENTUAL reads. Connects to Core-1 by default; automatically reconnects
+  # to the new leader using failover_addrs after a Raft leader election.
+  mneme-ha-replica-1:
+    profiles: ["ha-full"]
+    <<: *core-build
+    container_name: mneme-ha-replica-1
+    hostname: mneme-ha-replica-1
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
+    environment:
+      <<: *common-env
+      CORE_ADDR: mneme-core-1:7379
+      MNEME_CONFIG: /etc/mneme/replica-ha-1.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_healthy
+    volumes:
+      - ha-replica1-data:/var/lib/mneme
+      - ha-certs:/certs:ro
+    ports:
+      - "6384:6384"
+      - "9101:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-ha-replica-1]
+
+  # ── HA Read Replica 2 (ha-full profile) ──────────────────────────────────
+  mneme-ha-replica-2:
+    profiles: ["ha-full"]
+    <<: *core-build
+    container_name: mneme-ha-replica-2
+    hostname: mneme-ha-replica-2
+    restart: unless-stopped
+    user: root
+    entrypoint: ["/bin/bash", "/docker/entrypoint-replica.sh"]
+    environment:
+      <<: *common-env
+      CORE_ADDR: mneme-core-1:7379
+      MNEME_CONFIG: /etc/mneme/replica-ha-2.toml
+    depends_on:
+      mneme-core-1:
+        condition: service_healthy
+    volumes:
+      - ha-replica2-data:/var/lib/mneme
+      - ha-certs:/certs:ro
+    ports:
+      - "6385:6385"
+      - "9102:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-ha-replica-2]
+
+  # ── Prometheus (full / ha-full / monitoring profile) ──────────────────────
+  prometheus:
+    profiles: ["full", "ha-full", "monitoring"]
+    image: prom/prometheus:v2.51.0
+    container_name: mneme-prometheus
+    hostname: mneme-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9094:9090"
+    networks:
+      mneme-net:
+        aliases: [mneme-prometheus]
+
+  # ── Grafana (full / ha-full / monitoring profile) ─────────────────────────
+  grafana:
+    profiles: ["full", "ha-full", "monitoring"]
+    image: grafana/grafana:10.4.2
+    container_name: mneme-grafana
+    hostname: mneme-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      mneme-net:
+        aliases: [mneme-grafana]
+
+  # ── Smoke tests (cluster-test profile) ────────────────────────────────────
+  smoke-test:
+    profiles: ["cluster-test"]
+    <<: *core-build
+    container_name: mneme-smoke-test
+    entrypoint: ["/bin/bash", "/docker/smoke-test.sh"]
+    environment:
+      MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
+      MNEME_HOST: mneme-core:6379
+    volumes:
+      - certs:/certs:ro
+    networks:
+      - mneme-net
+
+  integration-test:
+    profiles: ["cluster-test"]
+    <<: *core-build
+    container_name: mneme-integration-test
+    entrypoint: ["/bin/bash", "/docker/integration-test.sh"]
+    environment:
+      MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
+      MNEME_CONFIG: /etc/mneme/core.toml
+      MNEME_HOST: mneme-core:6379
+    volumes:
+      - core-data:/var/lib/mneme
+      - certs:/certs:ro
+    networks:
+      - mneme-net
+
+networks:
+  mneme-net:
+    driver: bridge
+
+volumes:
+  # solo
+  solo-data:
+  # cluster / full
+  certs:
+  core-data:
+  keeper1-data:
+  keeper2-data:
+  keeper3-data:
+  replica-data:
+  replica2-data:
+  # ha / ha-full
+  ha-certs:
+  ha-core1-data:
+  ha-core2-data:
+  ha-core3-data:
+  ha-keeper1-data:
+  ha-keeper2-data:
+  ha-replica1-data:
+  ha-replica2-data:
+  # monitoring
+  prometheus-data:
+  grafana-data:

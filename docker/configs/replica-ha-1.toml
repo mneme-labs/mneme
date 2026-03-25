@@ -1,0 +1,60 @@
+# Mneme — HA Read Replica 1 (ha-full profile)
+# Reads from the Raft cluster with automatic leader failover.
+# On leader election, the replica reconnects to the new leader via failover_addrs.
+
+[node]
+role         = "read-replica"
+node_id      = "replica-ha-1"
+bind         = "0.0.0.0"
+port         = 6384
+rep_port     = 7384
+metrics_port = 9090
+io_threads   = 0
+# Primary target: current Raft leader (Core-1 bootstraps as leader)
+core_addr    = "mneme-core-1:7379"
+# Failover list: replica reconnects to these in order on leader loss
+failover_addrs = ["mneme-core-2:7379", "mneme-core-3:7379"]
+join_token   = "docker-join-token-change-in-production"
+
+[memory]
+pool_bytes          = "512mb"
+eviction_threshold  = 0.90
+huge_pages          = false
+promotion_threshold = 10
+
+[cluster]
+heartbeat_ms = 500
+
+[read_replicas]
+enabled      = true
+lag_alert_ms = 50
+
+[persistence]
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60
+wal_max_mb          = 64
+wal_compression     = "zstd"
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/var/lib/mneme/ca.crt"
+auto_generate = false
+server_name   = "mneme.local"
+
+[auth]
+users_db       = "/var/lib/mneme/users.db"
+cluster_secret = "docker-cluster-secret-change-in-production"
+token_ttl_h    = 24
+
+[connections]
+max_total          = 100000
+max_per_ip         = 1000
+idle_timeout_s     = 30
+tcp_keepalive_s    = 10
+max_in_flight      = 200000
+request_timeout_ms = 5000
+
+[logging]
+level  = "info"
+format = "json"
