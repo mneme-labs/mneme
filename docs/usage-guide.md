@@ -204,7 +204,7 @@ docker exec mneme bash /docker/smoke-test.sh
 
 ```bash
 # Clone and build
-git clone https://github.com/mneme-labs/mneme && cd mnemecache
+git clone https://github.com/mneme-labs/mneme && cd mneme
 cargo build --release
 
 # Start a solo node (generates TLS certs automatically)
@@ -312,7 +312,7 @@ scp mneme-server:/etc/mneme/ca.crt /etc/ssl/certs/mneme-ca.crt
 ```bash
 # Ubuntu 22.04+ / Debian 12+ / RHEL 9+ / any Linux 5.19+
 git clone https://github.com/mneme-labs/mneme
-cd mnemecache
+cd mneme
 sudo ./scripts/setup-linux.sh          # interactive -- prompts for topology
 ```
 
@@ -343,7 +343,7 @@ Configure and manage services manually following Section 4.
 docker build -t mnemelabs/core:0.1.0 .
 
 # Development image (full Rust toolchain + cargo-watch)
-docker build --target dev -t mnemecache:dev .
+docker build --target dev -t mnemelabs/core:dev .
 ```
 
 Docker Compose cluster (Core + 3 Keepers):
@@ -471,7 +471,7 @@ keys back during warm-up.
 
 ```bash
 # On the Core machine
-git clone https://github.com/mneme-labs/mneme && cd mnemecache
+git clone https://github.com/mneme-labs/mneme && cd mneme
 sudo ./scripts/setup-linux.sh
 # Choose: 2) Core node
 # Enter: node ID (e.g. mneme-core-prod), RAM pool, data directory
@@ -495,7 +495,7 @@ mneme-cli -H 10.0.0.1:6379 -u admin -p <PASSWORD> cluster-info
 On each Keeper machine:
 
 ```bash
-git clone https://github.com/mneme-labs/mneme && cd mnemecache
+git clone https://github.com/mneme-labs/mneme && cd mneme
 sudo TOPOLOGY=keeper KEEPER_COUNT=1 CORE_ADDR=10.0.0.1:7379 \
      ./scripts/setup-linux.sh
 # Choose: 1) Join bundle  <-- paste the JOIN BUNDLE from Step 1
@@ -544,7 +544,7 @@ write latency.
 #### Add a read replica
 
 ```bash
-git clone https://github.com/mneme-labs/mneme && cd mnemecache
+git clone https://github.com/mneme-labs/mneme && cd mneme
 sudo TOPOLOGY=replica CORE_ADDR=10.0.0.1:7379 \
      ./scripts/setup-linux.sh
 # Choose: 1) Join bundle  <-- paste the JOIN BUNDLE
@@ -1972,7 +1972,7 @@ main().catch(console.error);
 
 ### 16.4 Go
 
-Install: `go get github.com/mnemecache/go-mneme`
+Install: `go get github.com/mneme-labs/go-mneme`
 
 ```go
 package main
@@ -1983,7 +1983,7 @@ import (
     "log"
     "time"
 
-    mneme "github.com/mnemecache/go-mneme"
+    mneme "github.com/mneme-labs/go-mneme"
 )
 
 func main() {
@@ -2781,8 +2781,7 @@ All 70 commands available in `mneme-cli`, grouped by category.
 | `--username <user>` | `-u` | Username for auth |
 | `--password <pass>` | `-p` | Password for auth |
 | `--token <tok>` | `-t` | Session token (alternative to -u/-p) |
-| `--ca-cert <path>` | | CA certificate path |
-| `--insecure` | | Skip TLS CA verification |
+| `--ca-cert <path>` | | CA certificate path (e.g. `/etc/mneme/ca.crt`) |
 | `--consistency <level>` | `-c` | `eventual`, `one`, `quorum` (default), `all` |
 | `--db <id>` | `-d` | Database ID (numeric) |
 | `--profile <name>` | `-P` | Use a saved connection profile |
@@ -2999,13 +2998,13 @@ grep server_name /etc/mneme/core.toml
 certificates if expired. The `server_name` in the client config must match
 `tls.server_name` in `core.toml`.
 
-### Docker: --insecure flag not working
+### Docker: TLS connection issues
 
-The `--insecure` flag skips CA verification only. It does not skip TLS
-entirely. You still need valid credentials.
+Ensure the CA cert is available. All containers expose `/etc/mneme/ca.crt` via
+the entrypoint symlink.
 
 ```bash
-docker exec mneme-core mneme-cli --host $MNEME_HOST -u admin -p secret stats
+docker exec mneme-core mneme-cli --host $MNEME_HOST --ca-cert /etc/mneme/ca.crt -u admin -p secret stats
 ```
 
 ### Payload too large error

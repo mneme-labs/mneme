@@ -36,7 +36,15 @@ warn() { printf "${YELLOW}  WARN${NC} %s\n" "$*"; }
 
 cli() {
     local host="$1"; shift
-    mneme-cli -H "$host" --insecure --password "$ADMIN_PASS" "$@" 2>&1
+    local ca_cert=""
+    for _c in /etc/mneme/ca.crt /var/lib/mneme/ca.crt /certs/ca.crt; do
+        [[ -f "$_c" ]] && { ca_cert="$_c"; break; }
+    done
+    if [[ -n "$ca_cert" ]]; then
+        mneme-cli -H "$host" --ca-cert "$ca_cert" --password "$ADMIN_PASS" "$@" 2>&1
+    else
+        mneme-cli -H "$host" --password "$ADMIN_PASS" "$@" 2>&1
+    fi
 }
 
 # ── Wait for cluster to be ready ──────────────────────────────────────────────

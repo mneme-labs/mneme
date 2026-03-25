@@ -93,7 +93,7 @@ grep HugePages /proc/meminfo
 
 ```bash
 git clone https://github.com/mneme-labs/mneme.git
-cd mnemecache
+cd mneme
 
 # Release build with native CPU optimizations (excludes benchmarks)
 RUSTFLAGS="-C target-cpu=native" \

@@ -6,7 +6,7 @@ description: >
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://mnemecache.io
+home: https://mnemelabs.io
 sources:
   - https://github.com/mneme-labs/mneme
 keywords:
@@ -17,5 +17,5 @@ keywords:
   - rust
 maintainers:
   - name: Mneme Labs
-    email: dev@mneme-labs.io
-    url: https://mneme-labs.io
+    email: dev@mnemelabs.io
+    url: https://mnemelabs.io

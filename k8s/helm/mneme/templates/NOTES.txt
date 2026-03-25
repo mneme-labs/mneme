@@ -37,5 +37,5 @@ Metrics:
   kubectl -n {{ include "mneme.namespace" . }} port-forward svc/{{ include "mneme.fullname" . }}-core 9090:9090 &
   open http://localhost:9090/metrics
 
-Docs: https://mnemecache.io
+Docs: https://mnemelabs.io
 Repo: https://github.com/mneme-labs/mneme

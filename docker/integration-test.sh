@@ -60,7 +60,8 @@ cli() {
         mneme-cli --ca-cert "$CA_CERT" -H "$MNEME_HOST" \
             -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" "$@" 2>/dev/null
     else
-        mneme-cli --insecure -H "$MNEME_HOST" \
+        # CA cert symlinked to /etc/mneme/ca.crt by entrypoint scripts
+        mneme-cli --ca-cert "/etc/mneme/ca.crt" -H "$MNEME_HOST" \
             -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" "$@" 2>/dev/null
     fi
 }
@@ -68,14 +69,15 @@ cli() {
 # ── Wait for server ────────────────────────────────────────────────────────────
 section "Waiting for Core to be ready (${MNEME_HOST})"
 for i in $(seq 1 60); do
-    if mneme-cli --insecure --host "$MNEME_HOST" \
+    _ca="${CA_CERT:-/etc/mneme/ca.crt}"
+    if mneme-cli --ca-cert "$_ca" --host "$MNEME_HOST" \
             -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" cluster-info 2>/dev/null \
             | grep -qi "Node Role"; then
         # CA cert may now be readable
-        for candidate in /var/lib/mneme/ca.crt /certs/ca.crt; do
+        for candidate in /var/lib/mneme/ca.crt /certs/ca.crt /etc/mneme/ca.crt; do
             if [[ -f "$candidate" ]]; then CA_CERT="$candidate"; break; fi
         done
-        pass "Core is reachable (attempt $i, CA cert: ${CA_CERT:-none → insecure})"
+        pass "Core is reachable (attempt $i, CA cert: ${CA_CERT})"
         break
     fi
     if [[ $i -eq 60 ]]; then

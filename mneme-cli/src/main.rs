@@ -159,7 +159,7 @@ fn merge_config(cli: &Cli, profile: Option<&ProfileConfig>) -> EffectiveConfig {
 QUICK START:\n\
   mneme-cli -u admin -p secret get mykey\n\
   mneme-cli -u admin -p secret set mykey 'hello world'\n\
-  mneme-cli --insecure -u admin -p secret stats\n\
+  mneme-cli --ca-cert /etc/mneme/ca.crt -u admin -p secret stats\n\
 \n\
 AUTHENTICATION:\n\
   Token:     mneme-cli -t TOKEN get mykey\n\

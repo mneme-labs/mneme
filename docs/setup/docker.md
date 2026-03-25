@@ -51,7 +51,7 @@ docker compose version    # Docker Compose v2.x+
 Build the image and launch a solo node in under 30 seconds:
 
 ```bash
-git clone https://github.com/mneme-labs/mneme && cd mnemecache
+git clone https://github.com/mneme-labs/mneme && cd mneme
 
 # Build and start a single-node instance
 docker compose --profile solo up --build -d
@@ -79,17 +79,20 @@ docker build -t mnemelabs/core:0.1.0 .
 The multi-stage Dockerfile uses cargo-chef for dependency caching. Subsequent
 builds after a source-only change take seconds, not minutes.
 
-### Multi-arch build (amd64 + arm64)
+### Build all images
 
 ```bash
-# Create a buildx builder if you don't have one
-docker buildx create --use --name mneme-builder
+# Build each component image separately
+docker build --target core   -t mnemelabs/core:0.1.0   .
+docker build --target keeper -t mnemelabs/keeper:0.1.0 .
+docker build --target cli    -t mnemelabs/cli:0.1.0    .
+docker build --target bench  -t mnemelabs/bench:0.1.0  .
 
-# Build for both architectures and push to a registry
-docker buildx build \
-    --platform linux/amd64,linux/arm64 \
-    -t your-registry/mnemelabs/core:0.1.0 \
-    --push .
+# Push to registry
+docker push mnemelabs/core:0.1.0
+docker push mnemelabs/keeper:0.1.0
+docker push mnemelabs/cli:0.1.0
+docker push mnemelabs/bench:0.1.0
 ```
 
 ### Development image
@@ -98,10 +101,10 @@ The `dev` target includes the full Rust toolchain, cargo-watch, and
 cargo-nextest:
 
 ```bash
-docker build --target dev -t mnemecache:dev .
+docker build --target dev -t mnemelabs/core:dev .
 
 # Interactive dev shell with source mounted
-docker run --rm -it -v "$(pwd)":/build mnemecache:dev bash
+docker run --rm -it -v "$(pwd)":/build mnemelabs/core:dev bash
 ```
 
 ### Dockerfile stages

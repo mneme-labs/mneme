@@ -31,6 +31,9 @@ done
 # ═══════════════════════════════════════════════════════════════════════════════
 section "Test 1: Valid TLS connection with correct CA"
 
+# Also check /etc/mneme/ca.crt (symlinked by entrypoints)
+[[ -z "$CA_CERT" && -f "/etc/mneme/ca.crt" ]] && CA_CERT="/etc/mneme/ca.crt"
+
 if [[ -n "$CA_CERT" ]]; then
     RESULT=$(mneme-cli --ca-cert "$CA_CERT" -H "$MNEME_HOST" \
         -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" ping 2>&1)
@@ -40,14 +43,7 @@ if [[ -n "$CA_CERT" ]]; then
         fail "Valid TLS connection failed: $RESULT"
     fi
 else
-    info "No CA cert found, testing with --insecure"
-    RESULT=$(mneme-cli --insecure -H "$MNEME_HOST" \
-        -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" ping 2>&1)
-    if [[ "$RESULT" == *"PONG"* ]] || [[ "$RESULT" == *"OK"* ]] || [[ $? -eq 0 ]]; then
-        pass "TLS connection (insecure mode) succeeds"
-    else
-        fail "Insecure TLS connection failed: $RESULT"
-    fi
+    fail "CA cert not found at /etc/mneme/ca.crt, /var/lib/mneme/ca.crt, or /certs/ca.crt"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════

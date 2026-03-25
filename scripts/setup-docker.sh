@@ -130,9 +130,6 @@ info "Docker Compose : ${COMPOSE_VERSION}"
 info "Topology       : ${TOPOLOGY}  (ROLE=${ROLE}, KEEPERS=${KEEPER_COUNT})"
 [[ -n "$CORE_ADDR" ]] && info "Primary Core   : ${CORE_ADDR}"
 
-BUILDX_AVAILABLE=0
-docker buildx version &>/dev/null && BUILDX_AVAILABLE=1
-
 success "Docker environment OK."
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -179,30 +176,16 @@ if [[ "$SKIP_BUILD" == "1" ]]; then
   fi
   info "Using existing image: ${MNEME_IMAGE}"
 else
-  step "Building Docker image"
-  ask_yn MULTI_ARCH "Build for linux/amd64 + linux/arm64 (multi-arch)?" "n"
-
-  if [[ "$MULTI_ARCH" == "y" && "$BUILDX_AVAILABLE" == "1" ]]; then
-    ask REGISTRY "Push registry (empty = local amd64 load only)" ""
-    if [[ -n "${REGISTRY:-}" ]]; then
-      PUSH_TAG="${REGISTRY}/${MNEME_IMAGE}"
-      info "Building and pushing multi-arch: ${PUSH_TAG}"
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        -t "$PUSH_TAG" --push "${REPO_ROOT}"
-      MNEME_IMAGE="$PUSH_TAG"
-      success "Multi-arch image pushed: ${PUSH_TAG}"
-    else
-      info "Building amd64 only (local load)…"
-      docker buildx build \
-        --platform linux/amd64 \
-        -t "$MNEME_IMAGE" --load "${REPO_ROOT}"
-    fi
-  else
-    info "Building single-arch image: ${MNEME_IMAGE}"
-    docker build -t "$MNEME_IMAGE" "${REPO_ROOT}"
-  fi
-  success "Image built: ${MNEME_IMAGE}"
+  step "Building Docker images"
+  info "Building mnemelabs/core:0.1.0 …"
+  docker build --target core   -t mnemelabs/core:0.1.0   "${REPO_ROOT}"
+  info "Building mnemelabs/keeper:0.1.0 …"
+  docker build --target keeper -t mnemelabs/keeper:0.1.0 "${REPO_ROOT}"
+  info "Building mnemelabs/cli:0.1.0 …"
+  docker build --target cli    -t mnemelabs/cli:0.1.0    "${REPO_ROOT}"
+  info "Building mnemelabs/bench:0.1.0 …"
+  docker build --target bench  -t mnemelabs/bench:0.1.0  "${REPO_ROOT}"
+  success "All images built."
 fi
 
 export MNEME_IMAGE KEEPER_COUNT CORE_ADDR

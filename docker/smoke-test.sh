@@ -8,7 +8,15 @@ MCLI="${MCLI:-mneme-cli}"
 
 ok=0; fail=0
 
-c()  { "$MCLI" --host "$HOST" --insecure -u admin -p "$PASS" "$@" 2>&1; }
+# Locate CA cert (symlinked by entrypoints to /etc/mneme/ca.crt)
+CA_CERT=""
+for _c in /etc/mneme/ca.crt /var/lib/mneme/ca.crt /certs/ca.crt; do
+  [[ -f "$_c" ]] && { CA_CERT="$_c"; break; }
+done
+CA_ARGS=()
+[[ -n "$CA_CERT" ]] && CA_ARGS=(--ca-cert "$CA_CERT")
+
+c()  { "$MCLI" --host "$HOST" "${CA_ARGS[@]}" -u admin -p "$PASS" "$@" 2>&1; }
 
 pass() { echo "  ✓ $1"; ((ok++)); }
 xfail(){ echo "  ✗ $1 — got: $2"; ((fail++)); }
@@ -140,23 +148,23 @@ c del scan:apple scan:banana scan:cherry > /dev/null
 # ── DB Namespacing ────────────────────────────────────────────
 section "DB NAMESPACING"
 c set ns:key "in-db0" > /dev/null
-"$MCLI" --host "$HOST" --insecure -u admin -p "$PASS" -d 1 set ns:key "in-db1" > /dev/null 2>&1 || true
+"$MCLI" --host "$HOST" "${CA_ARGS[@]}" -u admin -p "$PASS" -d 1 set ns:key "in-db1" > /dev/null 2>&1 || true
 DB0=$(c get ns:key 2>&1)
-DB1=$("$MCLI" --host "$HOST" --insecure -u admin -p "$PASS" -d 1 get ns:key 2>&1) || true
+DB1=$("$MCLI" --host "$HOST" "${CA_ARGS[@]}" -u admin -p "$PASS" -d 1 get ns:key 2>&1) || true
 if echo "$DB0" | grep -q "in-db0" && echo "$DB1" | grep -q "in-db1"; then
   pass "db0 and db1 isolated"
 else
   xfail "db isolation" "db0=$DB0 db1=$DB1"
 fi
 c del ns:key > /dev/null 2>&1 || true
-"$MCLI" --host "$HOST" --insecure -u admin -p "$PASS" -d 1 del ns:key > /dev/null 2>&1 || true
+"$MCLI" --host "$HOST" "${CA_ARGS[@]}" -u admin -p "$PASS" -d 1 del ns:key > /dev/null 2>&1 || true
 
 # ── Auth / Tokens ─────────────────────────────────────────────
 section "AUTH / TOKENS"
 TOKEN=$(c auth-token 2>&1) || true
 if echo "$TOKEN" | grep -qE "[A-Za-z0-9+/._-]{20,}"; then
   pass "auth-token issued"
-  STAT=$("$MCLI" --host "$HOST" --insecure --token "$TOKEN" stats 2>&1) || true
+  STAT=$("$MCLI" --host "$HOST" "${CA_ARGS[@]}" --token "$TOKEN" stats 2>&1) || true
   if echo "$STAT" | grep -q "keys="; then pass "token-based auth works"
   else xfail "token-based stats" "$STAT"; fi
 else
@@ -170,7 +178,7 @@ check "user-list shows tester"  "tester"         user-list
 check "user-info role"          "readwrite"      user-info tester
 
 # readwrite user can read+write
-TSTAT=$("$MCLI" --host "$HOST" --insecure -u tester -p tpass stats 2>&1) || true
+TSTAT=$("$MCLI" --host "$HOST" "${CA_ARGS[@]}" -u tester -p tpass stats 2>&1) || true
 if echo "$TSTAT" | grep -q "keys="; then pass "readwrite user can stats"
 else xfail "readwrite user stats" "$TSTAT"; fi
 

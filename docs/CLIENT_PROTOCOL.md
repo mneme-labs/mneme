@@ -256,9 +256,9 @@ Error responses (`CmdId::Error = 0xF1`) carry a msgpack string.  Known error typ
 ## 8. Connection Lifecycle
 
 1. **TCP connect** to the Core node's client port (default: 6379).
-2. **TLS 1.3 handshake**. For self-signed certs, skip CA verification
-   (`--insecure` / disable cert verification in your TLS library).
-   For production, use a publicly-trusted cert on the Core.
+2. **TLS 1.3 handshake**. Provide the CA cert via `--ca-cert /etc/mneme/ca.crt`
+   (or the equivalent `ca_cert` option in your TLS library) to validate the
+   server. For production, use a publicly-trusted cert on the Core.
 3. **Authenticate** — send `AUTH` frame with your session token.
 4. **Send commands** — each command is a Frame with the appropriate CmdId.
 5. **Read responses** — match by `req_id` if multiplexing.

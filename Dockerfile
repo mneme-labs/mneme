@@ -16,9 +16,11 @@
 # Build all at once (via docker-compose):
 #   docker compose build
 #
-# Multi-arch:
-#   docker buildx build --platform linux/amd64,linux/arm64 --target core \
-#     -t mnemelabs/core:0.1.0 --push .
+# Build each image:
+#   docker build --target core   -t mnemelabs/core:0.1.0   .
+#   docker build --target keeper -t mnemelabs/keeper:0.1.0 .
+#   docker build --target cli    -t mnemelabs/cli:0.1.0    .
+#   docker build --target bench  -t mnemelabs/bench:0.1.0  .
 # =============================================================================
 
 # Latest stable Rust on Debian 12 (bookworm) — tracks stable channel, not nightly

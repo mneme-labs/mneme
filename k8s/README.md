@@ -31,7 +31,7 @@ kubectl apply -f k8s/solo.yaml
 kubectl rollout status statefulset/mneme-solo -n mnemecache
 
 # Connect via NodePort
-mneme-cli --host <NODE_IP>:30379 --insecure -u admin -p <PASSWORD> stats
+mneme-cli --host <NODE_IP>:30379 --ca-cert /etc/mneme/ca.crt -u admin -p <PASSWORD> stats
 ```
 
 ### 2. Core + Keepers (standard production)
@@ -51,7 +51,7 @@ kubectl rollout status statefulset/mneme-keeper -n mnemecache
 
 # Connect
 kubectl port-forward svc/mneme-core 6379:6379 -n mnemecache
-mneme-cli --host localhost:6379 --insecure -u admin -p <PASSWORD> stats
+mneme-cli --host localhost:6379 --ca-cert /etc/mneme/ca.crt -u admin -p <PASSWORD> stats
 ```
 
 ### 3. Core + Keepers + Read Replicas (read-heavy workloads)
@@ -93,7 +93,7 @@ kubectl rollout status statefulset/mneme-replica -n mnemecache
 
 # Connect
 kubectl port-forward svc/mneme-core 6379:6379 -n mnemecache
-mneme-cli --host localhost:6379 --insecure -u admin -p <PASSWORD> stats
+mneme-cli --host localhost:6379 --ca-cert /etc/mneme/ca.crt -u admin -p <PASSWORD> stats
 ```
 
 ## Configuration
@@ -125,13 +125,13 @@ volumeClaimTemplates:
 
 ### Image
 
-Replace `mnemecache:latest` with your registry tag:
+Replace `mnemelabs/core:0.1.0` with your registry tag:
 
 ```bash
-docker build -t registry.example.com/mnemecache:v1.0.0 .
-docker push registry.example.com/mnemecache:v1.0.0
+docker build --target core -t registry.example.com/mnemelabs/core:1.0.0 .
+docker push registry.example.com/mnemelabs/core:1.0.0
 
-sed -i 's|mnemecache:latest|registry.example.com/mnemecache:v1.0.0|g' k8s/*.yaml
+sed -i 's|mnemelabs/core:0.1.0|registry.example.com/mnemelabs/core:1.0.0|g' k8s/*.yaml
 ```
 
 ## Architecture in Kubernetes

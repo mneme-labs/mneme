@@ -21,7 +21,7 @@ monitoring, and automated scaling.
 |-------------|---------|-------|
 | Kubernetes | 1.27+ | Tested on EKS, GKE, AKS, k3s, Talos |
 | `kubectl` | 1.27+ | Configured against your target cluster |
-| Container registry | any | `docker buildx` push or a CI pipeline |
+| Container registry | any | `docker push` or a CI pipeline |
 | StorageClass | `ReadWriteOnce` | `gp3`, `premium-lrs`, `local-path`, etc. |
 | Worker node OS | Linux kernel 5.19+ | Required for MnemeCache memory primitives |
 
@@ -39,17 +39,15 @@ monitoring, and automated scaling.
 ## 2 — Build and Push the Image
 
 ```bash
-# Build for the cluster architecture (usually amd64, or multi-arch)
-docker buildx build \
-    --platform linux/amd64,linux/arm64 \
-    -t your-registry/mnemecache:1.0.0 \
-    --push .
+# Build and push the core image to your registry
+docker build --target core -t your-registry/mnemelabs/core:1.0.0 .
+docker push your-registry/mnemelabs/core:1.0.0
 ```
 
 Update the `image:` field in every manifest you plan to use:
 
 ```yaml
-image: your-registry/mnemecache:1.0.0
+image: your-registry/mnemelabs/core:1.0.0
 imagePullPolicy: Always
 ```
 

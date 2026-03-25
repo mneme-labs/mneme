@@ -5,11 +5,11 @@
 **Distributed in-memory cache — built in Rust, Linux 5.19+**
 
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-mnemelabs-blue?logo=docker)](https://hub.docker.com/u/mnemelabs)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Linux 5.19+](https://img.shields.io/badge/Linux-5.19%2B-orange.svg)](https://kernel.org)
 [![Rust 1.85+](https://img.shields.io/badge/Rust-1.85%2B-orange.svg)](https://rustup.rs)
 
-[Website](https://mnemecache.io) · [Docs](docs/) · [Docker Hub](https://hub.docker.com/u/mnemelabs)
+[Website](https://mnemelabs.io) · [Docs](docs/) · [Docker Hub](https://hub.docker.com/u/mnemelabs)
 
 </div>
 
@@ -173,15 +173,17 @@ mneme-cli -u admin -p secret --consistency ALL set key value
 Build locally from source:
 
 ```bash
-# Build individual image
+# Build individual images
 docker build --target core   -t mnemelabs/core:0.1.0   .
 docker build --target keeper -t mnemelabs/keeper:0.1.0 .
 docker build --target cli    -t mnemelabs/cli:0.1.0    .
 docker build --target bench  -t mnemelabs/bench:0.1.0  .
 
-# Build and push all (logged in as mnemelabs)
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --target core -t mnemelabs/core:0.1.0 --push .
+# Push all (logged in as mnemelabs)
+docker push mnemelabs/core:0.1.0
+docker push mnemelabs/keeper:0.1.0
+docker push mnemelabs/cli:0.1.0
+docker push mnemelabs/bench:0.1.0
 ```
 
 ---
@@ -408,10 +410,10 @@ docker compose --profile cluster --profile cluster-test run --rm smoke-test
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
 ---
 
 <div align="center">
-Built by <a href="https://mneme-labs.io">Mneme Labs</a> · <a href="https://mnemecache.io">mnemecache.io</a>
+Built by <a href="https://mnemelabs.io">Mneme Labs</a> · <a href="https://mnemelabs.io">mnemelabs.io</a>
 </div>

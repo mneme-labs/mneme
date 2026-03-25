@@ -171,20 +171,8 @@ if [[ "$SKIP_BUILD" == "1" ]]; then
   info "SKIP_BUILD=1 — skipping docker build."
 else
   step "Building Docker image"
-  ask_yn MULTI_ARCH "Build for linux/amd64 + linux/arm64?" "y"
-  if [[ "$MULTI_ARCH" == "y" ]] && docker buildx version &>/dev/null; then
-    if [[ "$SKIP_PUSH" == "1" ]]; then
-      docker buildx build --platform linux/amd64 \
-        -t "$FULL_IMAGE" --load "${REPO_ROOT}"
-    else
-      docker buildx build \
-        --platform linux/amd64,linux/arm64 \
-        -t "$FULL_IMAGE" --push "${REPO_ROOT}"
-      SKIP_PUSH="1"   # already pushed by buildx --push
-    fi
-  else
-    docker build -t "$FULL_IMAGE" "${REPO_ROOT}"
-  fi
+  info "Building ${FULL_IMAGE} …"
+  docker build --target core -t "$FULL_IMAGE" "${REPO_ROOT}"
   success "Image built: ${FULL_IMAGE}"
 fi
 

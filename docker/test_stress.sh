@@ -34,7 +34,7 @@ cli() {
         mneme-cli --ca-cert "$CA_CERT" -H "$MNEME_HOST" \
             -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" "$@" 2>/dev/null
     else
-        mneme-cli --insecure -H "$MNEME_HOST" \
+        mneme-cli --ca-cert "/etc/mneme/ca.crt" -H "$MNEME_HOST" \
             -u admin -p "${MNEME_ADMIN_PASSWORD:-secret}" "$@" 2>/dev/null
     fi
 }
