@@ -21,9 +21,9 @@
 #     -t mnemelabs/core:0.1.0 --push .
 # =============================================================================
 
-# Pinned Rust toolchain on Debian 12 (bookworm) — update when new stable drops
-ARG RUST_IMAGE=rust:1.85-bookworm
-# Pinned minimal runtime base — same Debian version as builder for glibc compat
+# Latest stable Rust on Debian 12 (bookworm) — tracks stable channel, not nightly
+ARG RUST_IMAGE=rust:bookworm
+# Pinned Debian 12 slim runtime — same Debian version as builder for glibc compat
 ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 # ── Stage 1: cargo-chef base ──────────────────────────────────────────────────
@@ -37,8 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin cargo-chef version for reproducible builds
-RUN cargo install cargo-chef --version 0.1.68 --locked
+RUN cargo install cargo-chef --locked
 
 WORKDIR /build
 
