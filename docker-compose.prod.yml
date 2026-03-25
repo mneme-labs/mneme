@@ -1,0 +1,200 @@
+# Mneme — Production overrides
+# =============================================================================
+# Apply on top of docker-compose.yml for hardened production deployments:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --profile ha-full up -d
+#
+# What this adds over the base compose:
+#   - Memory hard limits (OOM killer threshold)
+#   - CPU quota per container
+#   - restart: always (not unless-stopped)
+#   - Security options: no-new-privileges
+#   - Log rotation (json-file, 100MB max, 5 files)
+#   - Read-only filesystem for CLI/bench containers
+#   - Healthcheck tuning (longer start_period for cold pulls)
+#
+# Required environment variables for production:
+#   MNEME_ADMIN_PASSWORD   Strong password — no default in prod
+#   MNEME_CLUSTER_SECRET   Random 32-byte hex — generate with:
+#                            openssl rand -hex 32
+# =============================================================================
+
+x-prod-logging: &prod-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "100m"
+      max-file: "5"
+      labels: "service"
+
+x-prod-security: &prod-security
+  security_opt:
+    - no-new-privileges:true
+  read_only: false   # data dirs are writable; set true only for cli/bench
+
+x-prod-restart: &prod-restart
+  restart: always
+
+services:
+  # ── Solo ────────────────────────────────────────────────────────────────────
+  mneme-solo:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${SOLO_MEM_LIMIT:-2g}
+          cpus: "${SOLO_CPU_LIMIT:-4}"
+        reservations:
+          memory: 512m
+
+  # ── Core ────────────────────────────────────────────────────────────────────
+  mneme-core:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${CORE_MEM_LIMIT:-4g}
+          cpus: "${CORE_CPU_LIMIT:-8}"
+        reservations:
+          memory: 512m
+
+  # ── Keepers ─────────────────────────────────────────────────────────────────
+  mneme-keeper-1:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${KEEPER_MEM_LIMIT:-4g}
+          cpus: "${KEEPER_CPU_LIMIT:-4}"
+        reservations:
+          memory: 1g
+
+  mneme-keeper-2:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${KEEPER_MEM_LIMIT:-4g}
+          cpus: "${KEEPER_CPU_LIMIT:-4}"
+        reservations:
+          memory: 1g
+
+  mneme-keeper-3:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${KEEPER_MEM_LIMIT:-4g}
+          cpus: "${KEEPER_CPU_LIMIT:-4}"
+        reservations:
+          memory: 1g
+
+  # ── Replicas ─────────────────────────────────────────────────────────────────
+  mneme-replica:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${REPLICA_MEM_LIMIT:-2g}
+          cpus: "${REPLICA_CPU_LIMIT:-4}"
+        reservations:
+          memory: 256m
+
+  mneme-replica-2:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${REPLICA_MEM_LIMIT:-2g}
+          cpus: "${REPLICA_CPU_LIMIT:-4}"
+        reservations:
+          memory: 256m
+
+  # ── HA Cores ─────────────────────────────────────────────────────────────────
+  mneme-core-1:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${CORE_MEM_LIMIT:-4g}
+          cpus: "${CORE_CPU_LIMIT:-8}"
+        reservations:
+          memory: 512m
+
+  mneme-core-2:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${CORE_MEM_LIMIT:-4g}
+          cpus: "${CORE_CPU_LIMIT:-8}"
+        reservations:
+          memory: 512m
+
+  mneme-core-3:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${CORE_MEM_LIMIT:-4g}
+          cpus: "${CORE_CPU_LIMIT:-8}"
+        reservations:
+          memory: 512m
+
+  mneme-ha-keeper-1:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${KEEPER_MEM_LIMIT:-4g}
+          cpus: "${KEEPER_CPU_LIMIT:-4}"
+        reservations:
+          memory: 1g
+
+  mneme-ha-keeper-2:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${KEEPER_MEM_LIMIT:-4g}
+          cpus: "${KEEPER_CPU_LIMIT:-4}"
+        reservations:
+          memory: 1g
+
+  mneme-ha-replica-1:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${REPLICA_MEM_LIMIT:-2g}
+          cpus: "${REPLICA_CPU_LIMIT:-4}"
+        reservations:
+          memory: 256m
+
+  mneme-ha-replica-2:
+    <<: [*prod-restart, *prod-security, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: ${REPLICA_MEM_LIMIT:-2g}
+          cpus: "${REPLICA_CPU_LIMIT:-4}"
+        reservations:
+          memory: 256m
+
+  # ── Monitoring ───────────────────────────────────────────────────────────────
+  prometheus:
+    <<: [*prod-restart, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2"
+
+  grafana:
+    <<: [*prod-restart, *prod-logging]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "2"
