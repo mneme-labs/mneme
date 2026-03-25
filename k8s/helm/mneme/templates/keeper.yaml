@@ -1,0 +1,180 @@
+{{- if and .Values.keeper.enabled (ne .Values.topology "solo") }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mneme.fullname" . }}-keeper
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+
+---
+# Headless service — gives each Keeper pod a stable DNS name
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mneme.fullname" . }}-keeper
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keeper
+  {{- if .Values.metrics.annotations }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+  {{- end }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "mneme.keeper.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: replication
+      port: 7379
+      targetPort: 7379
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mneme.fullname" . }}-keeper
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keeper
+spec:
+  serviceName: {{ include "mneme.fullname" . }}-keeper
+  replicas: {{ .Values.keeper.replicaCount }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "mneme.keeper.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mneme.keeper.selectorLabels" . | nindent 8 }}
+        {{- with .Values.keeper.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.keeper.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mneme.fullname" . }}-keeper
+      securityContext:
+        runAsUser:  1000
+        runAsGroup: 1000
+        fsGroup:    1000
+      {{- with .Values.keeper.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.keeper.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.keeper.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: config-patch
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              IDX="${HOSTNAME##*-}"
+              NODE_ID="keeper-${IDX}"
+              sed "s/keeper-PATCH/${NODE_ID}/" /config-template/mneme.toml > /etc/mneme/mneme.toml
+              echo "Config patched: node_id=${NODE_ID}"
+              timeout=60
+              until nc -z {{ include "mneme.fullname" . }}-core.{{ include "mneme.namespace" . }}.svc.cluster.local 7379 2>/dev/null; do
+                timeout=$((timeout - 1)); [ $timeout -le 0 ] && echo "Core not ready after 60s" && exit 1; sleep 1
+              done
+              echo "Core is ready"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-writable
+              mountPath: /etc/mneme
+      containers:
+        - name: keeper
+          image: {{ include "mneme.keeper.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/mneme-keeper"]
+          args: ["--config", "/etc/mneme/mneme.toml"]
+          ports:
+            - containerPort: 7379
+              name: replication
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mneme.secretName" . }}
+                  key: cluster_secret
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            {{- toYaml .Values.keeper.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config-writable
+              mountPath: /etc/mneme
+          livenessProbe:
+            tcpSocket:
+              port: 7379
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 7379
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: config-template
+          configMap:
+            name: {{ include "mneme.fullname" . }}-keeper-config
+        - name: config-writable
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.keeper.storage.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.keeper.storage.size }}
+
+{{- if .Values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mneme.fullname" . }}-keeper-pdb
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "mneme.keeper.selectorLabels" . | nindent 6 }}
+{{- end }}
+{{- end }}

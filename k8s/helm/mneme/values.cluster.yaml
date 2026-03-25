@@ -1,0 +1,30 @@
+# Mneme Helm — Cluster topology preset
+# Core + 3 Keepers. Use for single-server or small production deployments.
+# Apply with: helm install mneme ./k8s/helm/mneme -f k8s/helm/mneme/values.cluster.yaml
+
+topology: cluster
+
+core:
+  replicaCount: 1
+  poolBytes: "2gb"
+  resources:
+    requests:
+      cpu:    "1"
+      memory: "3Gi"
+    limits:
+      cpu:    "8"
+      memory: "8Gi"
+
+keeper:
+  enabled: true
+  replicaCount: 3
+  poolBytes: "4gb"
+  storage:
+    size: 50Gi
+  resources:
+    requests:
+      cpu:    "500m"
+      memory: "1Gi"
+    limits:
+      cpu:    "4"
+      memory: "6Gi"

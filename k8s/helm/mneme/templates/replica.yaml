@@ -1,0 +1,130 @@
+{{- if .Values.replica.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mneme.fullname" . }}-replica
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: replica
+  {{- if .Values.metrics.annotations }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+  {{- end }}
+spec:
+  selector:
+    {{- include "mneme.replica.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: client
+      port: 6380
+      targetPort: 6380
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+  type: {{ .Values.replica.service.type }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mneme.fullname" . }}-replica
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: replica
+spec:
+  replicas: {{ .Values.replica.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mneme.replica.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mneme.replica.selectorLabels" . | nindent 8 }}
+        {{- with .Values.replica.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.replica.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      securityContext:
+        runAsUser:  1000
+        runAsGroup: 1000
+        fsGroup:    1000
+      initContainers:
+        # Patch node_id to include pod name for unique identification
+        - name: config-patch
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              NODE_ID="replica-${HOSTNAME##*-}"
+              sed "s/replica-PATCH/${NODE_ID}/" /config-template/mneme.toml > /etc/mneme/mneme.toml
+              echo "Config patched: node_id=${NODE_ID}"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-writable
+              mountPath: /etc/mneme
+      containers:
+        - name: replica
+          image: {{ include "mneme.core.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/mneme-core"]
+          args: ["--config", "/etc/mneme/mneme.toml"]
+          ports:
+            - containerPort: 6380
+              name: client
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mneme.secretName" . }}
+                  key: cluster_secret
+            - name: MNEME_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mneme.secretName" . }}
+                  key: admin_password
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            {{- toYaml .Values.replica.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config-writable
+              mountPath: /etc/mneme
+          livenessProbe:
+            tcpSocket:
+              port: 6380
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 6380
+            initialDelaySeconds: 20
+            periodSeconds: 5
+      volumes:
+        - name: config-template
+          configMap:
+            name: {{ include "mneme.fullname" . }}-replica-config
+        - name: config-writable
+          emptyDir: {}
+        - name: data
+          emptyDir: {}   # replicas are stateless — state is pushed from Core
+{{- end }}

@@ -1,0 +1,186 @@
+---
+# Core TOML config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mneme.fullname" . }}-core-config
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core
+data:
+  mneme.toml: |
+    [node]
+    role         = {{ if eq .Values.topology "solo" }}"solo"{{ else }}"core"{{ end }}
+    node_id      = "mneme-core-0"
+    bind         = "0.0.0.0"
+    port         = 6379
+    rep_port     = 7379
+    metrics_port = 9090
+    io_threads   = 0
+
+    [memory]
+    pool_bytes         = {{ .Values.core.poolBytes | quote }}
+    eviction_threshold = {{ .Values.core.evictionThreshold }}
+    huge_pages         = false
+    promotion_threshold = 10
+
+    [cluster]
+    heartbeat_ms      = {{ .Values.core.raft.heartbeatMs }}
+    election_min_ms   = {{ .Values.core.raft.electionMinMs }}
+    election_max_ms   = {{ .Values.core.raft.electionMaxMs }}
+    quorum_timeout_ms = 200
+    {{- if eq .Values.topology "ha" }}
+    raft_id = 1
+    peers   = []   # patched by init container per pod ordinal
+    {{- end }}
+
+    [read_replicas]
+    enabled      = {{ .Values.replica.enabled }}
+    lag_alert_ms = 50
+
+    [persistence]
+    wal_dir             = {{ .Values.core.persistence.walDir | quote }}
+    snapshot_interval_s = {{ .Values.core.persistence.snapshotIntervalS }}
+    wal_max_mb          = {{ .Values.core.persistence.walMaxMb }}
+    wal_compression     = "zstd"
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/var/lib/mneme/ca.crt"
+    auto_generate = {{ .Values.tls.autoGenerate }}
+    server_name   = {{ .Values.tls.serverName | quote }}
+    extra_sans    = [{{ range .Values.tls.extraSans }}"{{ . }}", {{ end }}"mneme-core"]
+
+    [auth]
+    users_db       = "/var/lib/mneme/users.db"
+    cluster_secret = ""   # injected from Secret via env var
+    token_ttl_h    = 24
+
+    [connections]
+    max_total          = 100000
+    max_per_ip         = 1000
+    idle_timeout_s     = 30
+    tcp_keepalive_s    = 10
+    max_in_flight      = 200000
+    request_timeout_ms = 5000
+
+    [logging]
+    level  = "info"
+    format = "json"
+
+{{- if and .Values.keeper.enabled (ne .Values.topology "solo") }}
+---
+# Keeper TOML config template (node_id patched by init container)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mneme.fullname" . }}-keeper-config
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keeper
+data:
+  mneme.toml: |
+    [node]
+    role       = "keeper"
+    node_id    = "keeper-PATCH"
+    bind       = "0.0.0.0"
+    rep_port   = 7379
+    metrics_port = 9090
+    core_addr  = {{ include "mneme.core.addr" . | quote }}
+
+    [memory]
+    pool_bytes         = {{ .Values.keeper.poolBytes | quote }}
+    eviction_threshold = 0.90
+    huge_pages         = false
+    promotion_threshold = 10
+
+    [persistence]
+    wal_dir             = {{ .Values.keeper.persistence.walDir | quote }}
+    snapshot_interval_s = {{ .Values.keeper.persistence.snapshotIntervalS }}
+    wal_max_mb          = {{ .Values.keeper.persistence.walMaxMb }}
+    wal_compression     = "zstd"
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/var/lib/mneme/ca.crt"
+    auto_generate = true
+    server_name   = {{ .Values.tls.serverName | quote }}
+
+    [auth]
+    cluster_secret = ""   # injected from Secret
+    token_ttl_h    = 24
+
+    [logging]
+    level  = "info"
+    format = "json"
+{{- end }}
+
+{{- if .Values.replica.enabled }}
+---
+# Read Replica TOML config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mneme.fullname" . }}-replica-config
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: replica
+data:
+  mneme.toml: |
+    [node]
+    role         = "read-replica"
+    node_id      = "replica-PATCH"
+    bind         = "0.0.0.0"
+    port         = 6380
+    rep_port     = 7380
+    metrics_port = 9090
+    core_addr    = {{ include "mneme.core.addr" . | quote }}
+
+    [memory]
+    pool_bytes         = {{ .Values.replica.poolBytes | quote }}
+    eviction_threshold = 0.90
+    huge_pages         = false
+    promotion_threshold = 10
+
+    [cluster]
+    heartbeat_ms = 500
+
+    [read_replicas]
+    enabled      = true
+    lag_alert_ms = 50
+
+    [persistence]
+    wal_dir             = "/var/lib/mneme"
+    snapshot_interval_s = 60
+    wal_max_mb          = 64
+    wal_compression     = "zstd"
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/var/lib/mneme/ca.crt"
+    auto_generate = false
+    server_name   = {{ .Values.tls.serverName | quote }}
+
+    [auth]
+    users_db       = "/var/lib/mneme/users.db"
+    cluster_secret = ""   # injected from Secret
+    token_ttl_h    = 24
+
+    [connections]
+    max_total          = 100000
+    max_per_ip         = 1000
+    idle_timeout_s     = 30
+    tcp_keepalive_s    = 10
+    max_in_flight      = 200000
+    request_timeout_ms = 5000
+
+    [logging]
+    level  = "info"
+    format = "json"
+{{- end }}

@@ -1,0 +1,148 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "mneme.fullname" . }}-core
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mneme.fullname" . }}-core
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core
+  {{- if .Values.metrics.annotations }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+  {{- end }}
+spec:
+  selector:
+    {{- include "mneme.core.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: client
+      port: 6379
+      targetPort: 6379
+    - name: replication
+      port: 7379
+      targetPort: 7379
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+  type: {{ .Values.core.service.type }}
+  {{- if eq .Values.core.service.type "NodePort" }}
+  # Remove nodePort to let Kubernetes assign automatically
+  {{- end }}
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "mneme.fullname" . }}-core
+  namespace: {{ include "mneme.namespace" . }}
+  labels:
+    {{- include "mneme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: core
+spec:
+  serviceName: {{ include "mneme.fullname" . }}-core
+  replicas: {{ if eq .Values.topology "ha" }}3{{ else }}1{{ end }}
+  selector:
+    matchLabels:
+      {{- include "mneme.core.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mneme.core.selectorLabels" . | nindent 8 }}
+        {{- with .Values.core.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.core.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "mneme.fullname" . }}-core
+      securityContext:
+        runAsUser:  1000
+        runAsGroup: 1000
+        fsGroup:    1000
+      {{- with .Values.core.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.core.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.core.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: core
+          image: {{ include "mneme.core.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/usr/local/bin/mneme-core"]
+          args: ["--config", "/etc/mneme/mneme.toml"]
+          ports:
+            - containerPort: 6379
+              name: client
+            - containerPort: 7379
+              name: replication
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mneme.secretName" . }}
+                  key: cluster_secret
+            - name: MNEME_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mneme.secretName" . }}
+                  key: admin_password
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            {{- toYaml .Values.core.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config
+              mountPath: /etc/mneme/mneme.toml
+              subPath: mneme.toml
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "mneme.fullname" . }}-core-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.core.storage.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.core.storage.size }}

@@ -1,0 +1,51 @@
+# Mneme Helm — HA topology preset
+# 3-Core Raft cluster + 3 Keepers + 2 Read Replicas.
+# Any 2 Cores form a quorum. Leader failure triggers automatic election (<5s).
+# Apply with: helm install mneme ./k8s/helm/mneme -f k8s/helm/mneme/values.ha.yaml
+
+topology: ha
+
+core:
+  replicaCount: 3
+  poolBytes: "4gb"
+  resources:
+    requests:
+      cpu:    "2"
+      memory: "6Gi"
+    limits:
+      cpu:    "16"
+      memory: "16Gi"
+  raft:
+    heartbeatMs:   500
+    electionMinMs: 1500
+    electionMaxMs: 3000
+
+keeper:
+  enabled: true
+  replicaCount: 3
+  poolBytes: "8gb"
+  storage:
+    size: 100Gi
+  resources:
+    requests:
+      cpu:    "1"
+      memory: "2Gi"
+    limits:
+      cpu:    "8"
+      memory: "12Gi"
+
+replica:
+  enabled: true
+  replicaCount: 2
+  poolBytes: "2gb"
+  resources:
+    requests:
+      cpu:    "500m"
+      memory: "1Gi"
+    limits:
+      cpu:    "4"
+      memory: "4Gi"
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2

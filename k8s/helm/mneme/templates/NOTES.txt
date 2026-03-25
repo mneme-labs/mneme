@@ -1,0 +1,41 @@
+Mneme {{ .Chart.AppVersion }} deployed successfully!
+
+Topology: {{ .Values.topology }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Connect from inside the cluster:
+  mneme-cli --host {{ include "mneme.fullname" . }}-core.{{ include "mneme.namespace" . }}.svc.cluster.local:6379 \
+    -u admin -p <password> ping
+
+Forward the client port to localhost:
+  kubectl -n {{ include "mneme.namespace" . }} port-forward svc/{{ include "mneme.fullname" . }}-core 6379:6379 &
+  mneme-cli --host localhost:6379 \
+    --ca-cert <path-to-ca.crt> -u admin -p <password> ping
+
+{{- if eq .Values.topology "ha" }}
+
+HA cluster — 3 Core nodes in Raft consensus.
+Check Raft leader:
+  kubectl -n {{ include "mneme.namespace" . }} exec -it \
+    {{ include "mneme.fullname" . }}-core-0 -- mneme-cli \
+    --host localhost:6379 -u admin -p <password> cluster-info
+{{- end }}
+
+{{- if .Values.replica.enabled }}
+
+Read replicas (EVENTUAL reads only):
+  kubectl -n {{ include "mneme.namespace" . }} port-forward svc/{{ include "mneme.fullname" . }}-replica 6380:6380 &
+  mneme-cli --host localhost:6380 -u admin -p <password> get <key>
+{{- end }}
+
+Retrieve the admin password:
+  kubectl -n {{ include "mneme.namespace" . }} get secret {{ include "mneme.secretName" . }} \
+    -o jsonpath='{.data.admin_password}' | base64 -d
+
+Metrics:
+  kubectl -n {{ include "mneme.namespace" . }} port-forward svc/{{ include "mneme.fullname" . }}-core 9090:9090 &
+  open http://localhost:9090/metrics
+
+Docs: https://mnemecache.io
+Repo: https://github.com/mneme-labs/mneme

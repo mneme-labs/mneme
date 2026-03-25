@@ -1,0 +1,149 @@
+# Mneme Helm chart — default values (solo topology)
+# Override with --values values.cluster.yaml or --values values.ha.yaml
+# or set individual values with --set key=value
+
+# ── Topology ──────────────────────────────────────────────────────────────────
+# solo    — Core + embedded persistence in one Pod. No external Keepers.
+# cluster — Core + 3 Keeper StatefulSet pods.
+# ha      — 3-Core Raft + 3 Keeper pods + optional read replicas.
+topology: solo
+
+# ── Image registry ────────────────────────────────────────────────────────────
+image:
+  registry: docker.io
+  # Image versions — update together when upgrading
+  coreRepository:   mnemelabs/core
+  keeperRepository: mnemelabs/keeper
+  tag:              "0.1.0"
+  pullPolicy:       IfNotPresent
+  # pullSecrets:
+  #   - name: regcred
+
+# ── Global labels added to all resources ──────────────────────────────────────
+commonLabels: {}
+# example:
+#   environment: production
+#   team: platform
+
+# ── Namespace ─────────────────────────────────────────────────────────────────
+# Set createNamespace: true if deploying to a new cluster
+namespace:
+  create: false
+  name: mneme
+
+# ── Authentication (REQUIRED in production) ───────────────────────────────────
+auth:
+  # Admin password — set a strong value; no default in production
+  adminPassword: "changeme"
+  # Shared HMAC secret for cluster node authentication
+  # Generate: openssl rand -hex 32
+  clusterSecret: "changeme-use-openssl-rand-hex-32"
+  # Reference an existing Secret instead of creating one:
+  # existingSecret: my-mneme-secret
+  # existingSecretKey: cluster_secret
+
+# ── Core configuration ────────────────────────────────────────────────────────
+core:
+  replicaCount: 1    # 1 for solo/cluster, 3 for ha (set automatically by topology)
+  resources:
+    requests:
+      cpu:    "500m"
+      memory: "1.5Gi"
+    limits:
+      cpu:    "4"
+      memory: "4Gi"
+  # Pool size — must be <= resources.limits.memory minus OS overhead (~500Mi)
+  poolBytes: "1gb"
+  evictionThreshold: 0.90
+  # Raft settings (ha topology only)
+  raft:
+    heartbeatMs:    500
+    electionMinMs:  1500
+    electionMaxMs:  3000
+  persistence:
+    walDir:            "/var/lib/mneme"
+    snapshotIntervalS: 60
+    walMaxMb:          256
+  storage:
+    size:         1Gi
+    # storageClassName: gp3
+  service:
+    type: ClusterIP
+    # type: LoadBalancer   # for external access
+    nodePort: 30379         # used when type: NodePort
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+  nodeSelector: {}
+
+# ── Keeper configuration (cluster + ha topologies) ────────────────────────────
+keeper:
+  enabled: false    # auto-enabled for cluster/ha topology
+  replicaCount: 3
+  resources:
+    requests:
+      cpu:    "250m"
+      memory: "512Mi"
+    limits:
+      cpu:    "2"
+      memory: "3Gi"
+  poolBytes: "2gb"
+  persistence:
+    walDir:            "/var/lib/mneme"
+    snapshotIntervalS: 60
+    walMaxMb:          512
+  storage:
+    size:         20Gi
+    # storageClassName: gp3
+  podAnnotations: {}
+  podLabels: {}
+  affinity: {}
+  tolerations: []
+  nodeSelector: {}
+
+# ── Read Replica configuration ────────────────────────────────────────────────
+replica:
+  enabled: false
+  replicaCount: 2
+  resources:
+    requests:
+      cpu:    "250m"
+      memory: "512Mi"
+    limits:
+      cpu:    "2"
+      memory: "2Gi"
+  poolBytes: "512mb"
+  storage:
+    size: 1Gi
+  service:
+    type:     ClusterIP
+    nodePort: 30380
+  podAnnotations: {}
+  podLabels: {}
+
+# ── TLS ───────────────────────────────────────────────────────────────────────
+tls:
+  autoGenerate: true
+  serverName:   "mneme.local"
+  # Additional SANs added to the auto-generated cert
+  extraSans: []
+  # Provide your own cert/key (disables autoGenerate):
+  # cert: ""
+  # key:  ""
+  # caBundle: ""
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+metrics:
+  enabled: true
+  # Annotate pods for Prometheus scraping
+  annotations: true
+  serviceMonitor:
+    enabled: false    # requires prometheus-operator CRD
+    interval: 15s
+    scrapeTimeout: 10s
+
+# ── Pod Disruption Budget ─────────────────────────────────────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2   # keepers: always keep 2 up during rolling updates
