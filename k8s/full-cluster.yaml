@@ -1,0 +1,803 @@
+# MnemeCache Full Cluster — all-in-one deployment
+# Includes: Namespace, Secrets, Core (x1), Keepers (x3), Replicas (x2), Monitoring
+# Apply with: kubectl apply -f k8s/full-cluster.yaml
+#
+# IMPORTANT: Edit the Secret values before deploying to production.
+# Generate strong values: openssl rand -base64 32
+
+# ============================================================
+# Namespace
+# ============================================================
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mnemecache
+  labels:
+    app.kubernetes.io/name: mneme
+
+# ============================================================
+# Secrets
+# ============================================================
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mneme-auth
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: auth
+type: Opaque
+data:
+  # base64("change-me-in-production")
+  cluster_secret: Y2hhbmdlLW1lLWluLXByb2R1Y3Rpb24=
+  # base64("admin-password-here")
+  admin_password: YWRtaW4tcGFzc3dvcmQtaGVyZQ==
+
+# ============================================================
+# Core — ServiceAccount, ConfigMap, Services, StatefulSet
+# ============================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mneme-core
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mneme-core-config
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+data:
+  mneme.toml: |
+    [node]
+    role       = "core"
+    node_id    = "mneme-core-0"
+    bind       = "0.0.0.0"
+    port       = 6379
+    rep_port   = 7379
+    metrics_port = 9090
+
+    [memory]
+    pool_bytes         = "1gb"
+    eviction_threshold = 0.90
+    huge_pages         = false
+
+    [cluster]
+    heartbeat_ms     = 500
+    election_min_ms  = 1500
+    election_max_ms  = 3000
+    quorum_timeout_ms = 200
+
+    [persistence]
+    wal_dir             = "/var/lib/mneme"
+    snapshot_interval_s = 60
+    wal_max_mb          = 256
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/etc/mneme/ca.crt"
+    auto_generate = true
+    server_name   = "mneme-core"
+    extra_sans    = ["mneme-core.mneme.svc.cluster.local"]
+
+    [auth]
+    users_db       = "/var/lib/mneme/users.db"
+    cluster_secret = ""
+    token_ttl_h    = 24
+
+    [connections]
+    max_total       = 100000
+    max_per_ip      = 1000
+    idle_timeout_s  = 30
+    tcp_keepalive_s = 10
+    max_in_flight   = 200000
+    request_timeout_ms = 5000
+
+    [databases]
+    max_databases    = 16
+    default_database = 0
+
+    [logging]
+    level  = "info"
+    format = "json"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-core
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+spec:
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+  ports:
+    - name: client
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+    - name: replication
+      port: 7379
+      targetPort: 7379
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-core-external
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+spec:
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+  ports:
+    - name: client
+      port: 6379
+      targetPort: 6379
+      nodePort: 30379
+      protocol: TCP
+  type: NodePort
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mneme-core
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: core
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  serviceName: mneme-core
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+      app.kubernetes.io/component: core
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mneme
+        app.kubernetes.io/component: core
+    spec:
+      serviceAccountName: mneme-core
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: mneme-core
+          image: mnemelabs/core:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/mneme-core"]
+          args: ["--config", "/etc/mneme/mneme.toml"]
+          ports:
+            - containerPort: 6379
+              name: client
+            - containerPort: 7379
+              name: replication
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: cluster_secret
+            - name: MNEME_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: admin_password
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1.5Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config
+              mountPath: /etc/mneme/mneme.toml
+              subPath: mneme.toml
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: mneme-core-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+# ============================================================
+# Keepers (x3) — ServiceAccount, ConfigMap, Headless Service, StatefulSet, PDB
+# ============================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mneme-keeper
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: keeper
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mneme-keeper-config
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: keeper
+data:
+  mneme.toml: |
+    [node]
+    role       = "keeper"
+    node_id    = "hypnos-PATCH"
+    bind       = "0.0.0.0"
+    rep_port   = 7379
+    metrics_port = 9090
+    core_addr  = "mneme-core.mneme.svc.cluster.local:7379"
+
+    [memory]
+    pool_bytes         = "2gb"
+    eviction_threshold = 0.90
+    huge_pages         = false
+
+    [persistence]
+    wal_dir             = "/var/lib/mneme"
+    snapshot_interval_s = 60
+    wal_max_mb          = 512
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/etc/mneme/ca.crt"
+    auto_generate = true
+    server_name   = "mneme-core"
+
+    [auth]
+    cluster_secret = ""
+
+    [logging]
+    level  = "info"
+    format = "json"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-keeper
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: keeper
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: keeper
+  ports:
+    - name: replication
+      port: 7379
+      targetPort: 7379
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mneme-keeper
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: keeper
+spec:
+  serviceName: mneme-keeper
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+      app.kubernetes.io/component: keeper
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mneme
+        app.kubernetes.io/component: keeper
+    spec:
+      serviceAccountName: mneme-keeper
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: config-patch
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              IDX="${HOSTNAME##*-}"
+              NODE_ID="hypnos-${IDX}"
+              sed "s/hypnos-PATCH/${NODE_ID}/" /config-template/mneme.toml \
+                > /etc/mneme/mneme.toml
+              echo "Config patched: node_id = ${NODE_ID}"
+              timeout=30
+              until nc -z mneme-core.mneme.svc.cluster.local 7379 2>/dev/null; do
+                timeout=$((timeout - 1))
+                [ $timeout -le 0 ] && echo "Core not ready after 30s" && exit 1
+                sleep 1
+              done
+              echo "Core is ready"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-writable
+              mountPath: /etc/mneme
+      containers:
+        - name: mneme-keeper
+          image: mnemelabs/core:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/mneme-keeper"]
+          args: ["--config", "/etc/mneme/mneme.toml"]
+          ports:
+            - containerPort: 7379
+              name: replication
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: cluster_secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "3Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config-writable
+              mountPath: /etc/mneme
+          livenessProbe:
+            tcpSocket:
+              port: 7379
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 7379
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: config-template
+          configMap:
+            name: mneme-keeper-config
+        - name: config-writable
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mneme-keeper-pdb
+  namespace: mneme
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+      app.kubernetes.io/component: keeper
+
+# ============================================================
+# Replicas (x2) — ServiceAccount, ConfigMap, Services, StatefulSet
+# ============================================================
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mneme-replica
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mneme-replica-config
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+data:
+  replica.toml: |
+    [node]
+    role       = "read-replica"
+    node_id    = "replica-PATCH"
+    bind       = "0.0.0.0"
+    port       = 6380
+    rep_port   = 7379
+    metrics_port = 9090
+    core_addr  = "mneme-core.mneme.svc.cluster.local:7379"
+
+    [memory]
+    pool_bytes         = "1gb"
+    eviction_threshold = 0.90
+    huge_pages         = false
+
+    [cluster]
+    heartbeat_ms     = 500
+    election_min_ms  = 1500
+    election_max_ms  = 3000
+    quorum_timeout_ms = 200
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/etc/mneme/ca.crt"
+    auto_generate = true
+    server_name   = "mneme-core"
+
+    [auth]
+    users_db       = "/var/lib/mneme/users.db"
+    cluster_secret = ""
+    token_ttl_h    = 24
+
+    [connections]
+    max_total       = 100000
+    max_per_ip      = 1000
+    idle_timeout_s  = 30
+    tcp_keepalive_s = 10
+    max_in_flight   = 200000
+    request_timeout_ms = 5000
+
+    [databases]
+    max_databases    = 16
+    default_database = 0
+
+    [logging]
+    level  = "info"
+    format = "json"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-replica
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+  ports:
+    - name: client
+      port: 6380
+      targetPort: 6380
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-replica-read
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+spec:
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+  ports:
+    - name: client
+      port: 6380
+      targetPort: 6380
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mneme-replica
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: replica
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  serviceName: mneme-replica
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+      app.kubernetes.io/component: replica
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mneme
+        app.kubernetes.io/component: replica
+    spec:
+      serviceAccountName: mneme-replica
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: config-patch
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              IDX="${HOSTNAME##*-}"
+              NODE_ID="replica-${IDX}"
+              sed "s/replica-PATCH/${NODE_ID}/" /config-template/replica.toml \
+                > /etc/mneme/replica.toml
+              echo "Config patched: node_id = ${NODE_ID}"
+              timeout=30
+              until nc -z mneme-core.mneme.svc.cluster.local 7379 2>/dev/null; do
+                timeout=$((timeout - 1))
+                [ $timeout -le 0 ] && echo "Core not ready after 30s" && exit 1
+                sleep 1
+              done
+              echo "Core is ready"
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config-writable
+              mountPath: /etc/mneme
+      containers:
+        - name: mneme-replica
+          image: mnemelabs/core:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/mneme-core"]
+          args: ["--config", "/etc/mneme/replica.toml"]
+          ports:
+            - containerPort: 6380
+              name: client
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: cluster_secret
+            - name: MNEME_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: admin_password
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1.5Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: certs
+              mountPath: /var/lib/mneme
+            - name: config-writable
+              mountPath: /etc/mneme
+          livenessProbe:
+            tcpSocket:
+              port: 6380
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6380
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config-template
+          configMap:
+            name: mneme-replica-config
+        - name: config-writable
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: certs
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+# ============================================================
+# Monitoring — ServiceMonitor + PrometheusRule
+# ============================================================
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mnemecache
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+  namespaceSelector:
+    matchNames:
+      - mnemecache
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mnemecache-alerts
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    release: prometheus
+spec:
+  groups:
+    - name: mnemecache.critical
+      interval: 30s
+      rules:
+        - alert: MnemeOOMEvictions
+          expr: rate(mneme_evictions_total{reason="oom"}[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MnemeCache OOM evictions on {{ $labels.instance }}"
+            description: >
+              OOM evictions mean keys are being dropped due to RAM exhaustion.
+              Increase memory.pool_bytes or add a Keeper node immediately.
+
+        - alert: MnemeHighMemoryPressure
+          expr: mneme_memory_pressure_ratio > 0.90
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MnemeCache memory pressure > 90% on {{ $labels.instance }}"
+            description: >
+              Memory pressure above 90% triggers LFU eviction to cold store.
+              Consider increasing pool_bytes or adding a Keeper.
+
+        - alert: MnemeReplicationLagHigh
+          expr: mneme_replication_lag_ms > 500
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication lag > 500ms for keeper {{ $labels.keeper }}"
+            description: >
+              High replication lag may indicate network issues or a Keeper
+              that is slow to acknowledge writes.
+
+        - alert: MnemeKeeperDown
+          expr: mneme_cluster_live_nodes < 3
+          for: 30s
+          labels:
+            severity: critical
+          annotations:
+            summary: "One or more MnemeCache Keepers are down"
+            description: >
+              Expected 3 live Keepers but found {{ $value }}.
+              QUORUM writes require floor(N/2)+1 = 2 Keepers; below that threshold
+              all QUORUM writes will fail.
+
+        - alert: MnemeP99LatencyHigh
+          expr: >
+            histogram_quantile(0.99,
+              rate(mneme_request_duration_seconds_bucket{cmd="Set"}[5m])
+            ) > 0.800
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MnemeCache SET p99 > 800ms"
+            description: >
+              QUORUM SET p99 latency exceeds target (800ms). Check replication
+              lag and Keeper CPU/disk utilization.

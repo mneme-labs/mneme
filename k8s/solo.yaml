@@ -1,0 +1,215 @@
+# MnemeCache Solo mode — single pod with embedded keeper
+# For development, testing, or small single-node deployments.
+# Apply with: kubectl apply -f k8s/namespace.yaml -f k8s/secrets.yaml -f k8s/solo.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mneme-solo-config
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+data:
+  solo.toml: |
+    [node]
+    role       = "solo"
+    node_id    = "mneme-solo-0"
+    bind       = "0.0.0.0"
+    port       = 6379
+    metrics_port = 9090
+
+    [memory]
+    pool_bytes         = "1gb"
+    eviction_threshold = 0.90
+    huge_pages         = false
+
+    [cluster]
+    heartbeat_ms     = 500
+    election_min_ms  = 1500
+    election_max_ms  = 3000
+    quorum_timeout_ms = 200
+
+    [persistence]
+    enabled             = true
+    wal_dir             = "/var/lib/mneme"
+    snapshot_dir        = "/var/lib/mneme/snapshots"
+    snapshot_interval_s = 60
+    wal_max_mb          = 256
+
+    [tls]
+    cert          = "/var/lib/mneme/node.crt"
+    key           = "/var/lib/mneme/node.key"
+    ca_cert       = "/etc/mneme/ca.crt"
+    auto_generate = true
+    server_name   = "mneme-solo"
+    extra_sans    = ["mneme-solo.mneme.svc.cluster.local"]
+
+    [auth]
+    users_db       = "/var/lib/mneme/users.db"
+    cluster_secret = ""
+    token_ttl_h    = 24
+
+    [connections]
+    max_total       = 100000
+    max_per_ip      = 1000
+    idle_timeout_s  = 30
+    tcp_keepalive_s = 10
+    max_in_flight   = 200000
+    request_timeout_ms = 5000
+
+    [databases]
+    max_databases    = 16
+    default_database = 0
+
+    [logging]
+    level  = "info"
+    format = "json"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-solo
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9090"
+    prometheus.io/path:   "/metrics"
+spec:
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+  ports:
+    - name: client
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  type: ClusterIP
+
+---
+# NodePort for external client access
+apiVersion: v1
+kind: Service
+metadata:
+  name: mneme-solo-external
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+spec:
+  selector:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+  ports:
+    - name: client
+      port: 6379
+      targetPort: 6379
+      nodePort: 30379
+      protocol: TCP
+  type: NodePort
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mneme-solo
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  serviceName: mneme-solo
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+      app.kubernetes.io/component: solo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mneme
+        app.kubernetes.io/component: solo
+    spec:
+      serviceAccountName: mneme-solo
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: mneme-core
+          image: mnemelabs/core:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/mneme-core"]
+          args: ["--config", "/etc/mneme/solo.toml"]
+          ports:
+            - containerPort: 6379
+              name: client
+            - containerPort: 9090
+              name: metrics
+          env:
+            - name: MNEME_CLUSTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: cluster_secret
+            - name: MNEME_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mneme-auth
+                  key: admin_password
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1.5Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mneme
+            - name: config
+              mountPath: /etc/mneme/solo.toml
+              subPath: solo.toml
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: mneme-solo-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi   # WAL + snapshots + cold store
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mneme-solo
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    app.kubernetes.io/component: solo

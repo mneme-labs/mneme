@@ -1,0 +1,100 @@
+# Prometheus monitoring for MnemeCache
+# Requires kube-prometheus-stack or prometheus-operator.
+# Apply with: kubectl apply -f k8s/monitoring.yaml
+---
+# ServiceMonitor tells Prometheus to scrape all MnemeCache nodes
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mneme
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    # Must match the Prometheus operator's serviceMonitorSelector
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mneme
+  namespaceSelector:
+    matchNames:
+      - mnemecache
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+
+---
+# PrometheusRule — alert on critical MnemeCache conditions
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mneme-alerts
+  namespace: mneme
+  labels:
+    app.kubernetes.io/name: mneme
+    release: prometheus
+spec:
+  groups:
+    - name: mneme.critical
+      interval: 30s
+      rules:
+        - alert: MnemeOOMEvictions
+          expr: rate(mneme_evictions_total{reason="oom"}[5m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "MnemeCache OOM evictions on {{ $labels.instance }}"
+            description: >
+              OOM evictions mean keys are being dropped due to RAM exhaustion.
+              Increase memory.pool_bytes or add a Keeper node immediately.
+
+        - alert: MnemeHighMemoryPressure
+          expr: mneme_memory_pressure_ratio > 0.90
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MnemeCache memory pressure > 90% on {{ $labels.instance }}"
+            description: >
+              Memory pressure above 90% triggers LFU eviction to cold store.
+              Consider increasing pool_bytes or adding a Keeper.
+
+        - alert: MnemeReplicationLagHigh
+          expr: mneme_replication_lag_ms > 500
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replication lag > 500ms for keeper {{ $labels.keeper }}"
+            description: >
+              High replication lag may indicate network issues or a Keeper
+              that is slow to acknowledge writes.
+
+        - alert: MnemeKeeperDown
+          expr: mneme_cluster_live_nodes < 3
+          for: 30s
+          labels:
+            severity: critical
+          annotations:
+            summary: "One or more MnemeCache Keepers are down"
+            description: >
+              Expected 3 live Keepers but found {{ $value }}.
+              QUORUM writes require ⌊N/2⌋+1 = 2 Keepers; below that threshold
+              all QUORUM writes will fail.
+
+        - alert: MnemeP99LatencyHigh
+          expr: >
+            histogram_quantile(0.99,
+              rate(mneme_request_duration_seconds_bucket{cmd="Set"}[5m])
+            ) > 0.800
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MnemeCache SET p99 > 800ms"
+            description: >
+              QUORUM SET p99 latency exceeds target (800ms). Check replication
+              lag and Keeper CPU/disk utilization.
