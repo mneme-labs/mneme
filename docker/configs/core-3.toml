@@ -45,7 +45,6 @@ extra_sans    = ["mneme-core-1", "mneme-core-2", "mneme-core-3"]
 
 [auth]
 users_db       = "/var/lib/mneme/users.db"
-cluster_secret = "docker-cluster-secret-change-in-production"
 token_ttl_h    = 24
 
 [logging]

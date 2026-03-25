@@ -44,7 +44,6 @@ server_name   = "mneme.local"
 
 [auth]
 users_db       = "/var/lib/mneme/users.db"
-cluster_secret = "docker-cluster-secret-change-in-production"
 token_ttl_h    = 24
 
 [connections]
