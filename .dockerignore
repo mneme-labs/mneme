@@ -1,0 +1,26 @@
+# ── Build artifacts ───────────────────────────────────────────────────────────
+target/
+
+# ── Git / IDE ──────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# ── Developer notes (not needed in image) ─────────────────────────────────────
+.dev/
+.claude/
+AGENT.md
+CLAUDE.md
+
+# ── Test data / temp ──────────────────────────────────────────────────────────
+/tmp/
+*.snap
+*.test
+
+# NOTE: docs/, *.md, clients/, k8s/ are intentionally NOT excluded.
+# The runtime image copies docker/ configs and entrypoints which are in source.
+# README and docs can be useful for troubleshooting inside containers.

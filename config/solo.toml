@@ -1,0 +1,50 @@
+# MnemeCache — Solo mode configuration template
+# Solo mode runs Mnemosyne + Hypnos in a single process.
+# QUORUM/ALL consistency is silently downgraded to EVENTUAL.
+# Ideal for: development, single-machine deployments, CI/CD.
+
+[node]
+role         = "solo"
+node_id      = "mneme-solo"
+bind         = "0.0.0.0"
+port         = 6379
+rep_port     = 7379
+metrics_port = 9090
+io_threads   = 0             # 0 = one io_uring ring per CPU core
+join_token   = ""            # Not used in solo mode
+
+[memory]
+pool_bytes          = "256mb"   # Set to ~60-70% of available RAM
+eviction_threshold  = 0.90      # Lethe activates LFU eviction at 90% usage
+huge_pages          = true      # mmap(MAP_HUGETLB) — requires vm.nr_hugepages
+promotion_threshold = 10        # LFU counter threshold for cold → hot promotion
+
+[cluster]
+heartbeat_ms      = 500
+election_min_ms   = 1500
+election_max_ms   = 3000
+quorum_timeout_ms = 200
+
+[read_replicas]
+enabled      = false
+lag_alert_ms = 50
+
+[persistence]
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60
+wal_max_mb          = 128       # 128 MB WAL rotation threshold for solo
+wal_compression     = "zstd"   # Archive old WAL segments with zstd
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/etc/mneme/ca.crt"
+auto_generate = true            # rcgen auto-generates self-signed certs
+
+[auth]
+users_db    = "/var/lib/mneme/users.db"
+token_ttl_h = 24
+
+[logging]
+level  = "info"    # debug | info | warn | error
+format = "json"    # json | pretty

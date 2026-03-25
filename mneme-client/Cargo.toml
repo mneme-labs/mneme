@@ -1,0 +1,24 @@
+[package]
+name = "mneme-client"
+version = "0.1.0"
+edition = "2021"
+description = "Pontus — official Rust client for MnemeCache"
+
+[lib]
+name = "mneme_client"
+path = "src/lib.rs"
+
+[dependencies]
+mneme-common = { path = "../mneme-common" }
+tokio        = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls       = { workspace = true }
+rustls-pemfile = { workspace = true }
+rmp-serde    = { workspace = true }
+serde        = { workspace = true }
+bytes        = { workspace = true }
+dashmap      = { workspace = true }
+parking_lot  = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }

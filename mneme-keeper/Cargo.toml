@@ -1,0 +1,47 @@
+[package]
+name = "mneme-keeper"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mneme-keeper"
+path = "src/main.rs"
+
+[lib]
+name = "mneme_keeper"
+path = "src/lib.rs"
+
+[dependencies]
+mneme-common = { path = "../mneme-common" }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
+rmp-serde = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+bytes = { workspace = true }
+redb = { workspace = true }
+zstd = { workspace = true }
+parking_lot = { workspace = true }
+toml = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+crc = { workspace = true }
+libc = { workspace = true }
+rand = { workspace = true }
+
+# Linux-only: tokio-uring for io_uring async I/O.
+# TODO(io_uring): currently unused in compiled code; included here for when
+# the io_uring fast path is implemented. On macOS/Windows this is omitted and
+# Aoide falls back to synchronous POSIX / Win32 I/O via tokio's thread pool.
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-uring = { workspace = true }

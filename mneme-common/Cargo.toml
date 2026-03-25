@@ -1,0 +1,21 @@
+[package]
+name = "mneme-common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+bytes = { workspace = true }
+rmp-serde = { workspace = true }
+crc = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+ahash = { workspace = true }
+# Required by herold_client (Herold registration client)
+tokio = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }

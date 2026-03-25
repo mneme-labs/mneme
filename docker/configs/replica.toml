@@ -1,0 +1,59 @@
+# MnemeCache — Read Replica config for Docker Compose
+# role = "read-replica": accepts EVENTUAL consistency reads only.
+# Syncs state from the primary Core node via replication.
+# Clients connecting here must use EVENTUAL consistency mode.
+
+[node]
+role         = "read-replica"
+node_id      = "mneme-replica-0"
+bind         = "0.0.0.0"
+port         = 6380
+rep_port     = 7380
+metrics_port = 9090
+io_threads   = 0
+# Primary Core the replica syncs from (Docker service hostname)
+core_addr    = "mneme-core:7379"
+join_token   = "docker-join-token-change-in-production"
+
+[memory]
+pool_bytes          = "512mb"
+eviction_threshold  = 0.90
+huge_pages          = false
+promotion_threshold = 10
+
+[cluster]
+# Read replicas do not participate in Raft — they only receive replicated state.
+heartbeat_ms = 500
+
+[read_replicas]
+enabled      = true
+lag_alert_ms = 50
+
+[persistence]
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60
+wal_max_mb          = 64
+wal_compression     = "zstd"
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/var/lib/mneme/ca.crt"
+auto_generate = false
+
+[auth]
+users_db       = "/var/lib/mneme/users.db"
+cluster_secret = "docker-cluster-secret-change-in-production"
+token_ttl_h    = 24
+
+[connections]
+max_total          = 100000
+max_per_ip         = 1000
+idle_timeout_s     = 30
+tcp_keepalive_s    = 10
+max_in_flight      = 200000
+request_timeout_ms = 5000
+
+[logging]
+level  = "info"
+format = "json"

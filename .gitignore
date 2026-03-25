@@ -1,0 +1,64 @@
+# Build artifacts
+/target/
+**/target/
+
+# Developer-only notes (not part of the project)
+.dev/
+
+# Cargo lock (keep for binaries, optional for libraries)
+# Cargo.lock  ← intentionally tracked for reproducible builds
+
+# Editor and IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Rust incremental build cache
+**/*.pdb
+**/*.d
+
+# Benchmark output
+criterion/
+
+# Coverage
+lcov.info
+tarpaulin-report.html
+coverage/
+
+# Profiling
+perf.data
+perf.data.old
+*.flamegraph
+flamegraph.svg
+
+# Secrets and certs — NEVER commit real cluster credentials
+/etc/
+*.key
+*.pem
+ca.crt
+node.crt
+users.db
+mneme.toml
+
+# Runtime data
+*.wal
+*.wal.*
+*.snap
+*.redb
+*.zst
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.bak
+
+# Claude
+CLAUDE.MD
+Makefile
+.claude/

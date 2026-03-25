@@ -1,0 +1,53 @@
+# MnemeCache — Core node 3 config for Docker HA profile
+
+[node]
+role         = "core"
+node_id      = "mnemosyne-3"
+bind         = "0.0.0.0"
+port         = 6379
+rep_port     = 7379
+metrics_port = 9090
+io_threads   = 0
+join_token   = "docker-join-token-change-in-production"
+
+[memory]
+pool_bytes          = "512mb"
+eviction_threshold  = 0.90
+huge_pages          = false
+promotion_threshold = 10
+
+[cluster]
+heartbeat_ms      = 500
+election_min_ms   = 1500
+election_max_ms   = 3000
+quorum_timeout_ms = 200
+raft_id           = 3
+advertise_addr    = "mneme-core-3:7379"
+peers             = ["mneme-core-1:7379", "mneme-core-2:7379"]
+
+[read_replicas]
+enabled      = false
+lag_alert_ms = 50
+
+[persistence]
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60
+wal_max_mb          = 64
+wal_compression     = "zstd"
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/var/lib/mneme/ca.crt"
+auto_generate = true
+server_name   = "mneme.local"
+extra_sans    = ["mneme-core-1", "mneme-core-2", "mneme-core-3"]
+
+[auth]
+users_db       = "/var/lib/mneme/users.db"
+cluster_secret = "docker-cluster-secret-change-in-production"
+token_ttl_h    = 24
+
+[logging]
+level  = "info"
+format = "json"

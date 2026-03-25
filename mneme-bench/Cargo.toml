@@ -1,0 +1,17 @@
+[package]
+name = "mneme-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bench]]
+name = "latency"
+harness = false
+
+[dependencies]
+mneme-common = { path = "../mneme-common" }
+mneme-core = { path = "../mneme-core" }
+bytes = { workspace = true }
+rmp-serde = { workspace = true }
+tokio = { workspace = true }
+parking_lot = { workspace = true }
+criterion = { workspace = true }

@@ -1,0 +1,77 @@
+[workspace]
+members = ["mneme-common", "mneme-core", "mneme-keeper", "mneme-bench", "mneme-cli", "mneme-client"]
+resolver = "2"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.36", features = ["full"] }
+# tokio-uring is Linux-only (io_uring). Gated per-crate via
+# [target.'cfg(target_os = "linux")'.dependencies]. Listed here for version pinning.
+tokio-uring = { version = "0.4", features = ["bytes"] }
+
+# TLS
+rustls = { version = "0.23", default-features = false, features = ["ring", "tls12", "logging", "std"] }
+rcgen = { version = "0.13" }
+tokio-rustls = { version = "0.26" }
+rustls-pemfile = { version = "2.1" }
+
+# Auth / crypto
+hmac = { version = "0.12" }
+sha2 = { version = "0.10" }
+base64 = { version = "0.22" }
+pbkdf2 = { version = "0.12" }
+
+# Serialization
+rmp-serde = { version = "1.3" }
+serde = { version = "1", features = ["derive"] }
+serde_bytes = { version = "0.11" }
+bytes = { version = "1.5", features = ["serde"] }
+
+# CRC / hashing
+crc = { version = "3" }
+ahash = { version = "0.8" }
+
+# Storage
+redb = { version = "2.1" }
+zstd = { version = "0.13" }
+
+# Concurrency
+parking_lot = { version = "0.12" }
+crossbeam-epoch = { version = "0.9" }
+dashmap = { version = "5.5" }
+
+# Raft
+openraft = { version = "0.9", features = ["serde"] }
+
+# Protobuf
+prost = { version = "0.12" }
+
+# Config / CLI
+toml = { version = "0.8" }
+clap = { version = "4.5", features = ["derive"] }
+
+# Observability
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+prometheus = { version = "0.13" }
+
+# Perf — Linux only (perf_event_open syscall). Gated per-crate via
+# [target.'cfg(target_os = "linux")'.dependencies]. Listed here only for version pinning.
+perf-event = { version = "0.4" }
+
+# Error handling
+anyhow = { version = "1.0" }
+thiserror = { version = "1.0" }
+
+# HTTP (for metrics endpoint)
+hyper = { version = "1.2", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = { version = "0.1" }
+
+# Utils
+once_cell = { version = "1.19" }
+rand = { version = "0.8" }
+libc = { version = "0.2" }
+
+# Bench
+criterion = { version = "0.5", features = ["html_reports"] }

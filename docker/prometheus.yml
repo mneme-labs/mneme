@@ -1,0 +1,30 @@
+# MnemeCache — Prometheus scrape configuration
+# Targets all mneme services exposing metrics on port 9090.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "mneme-core"
+    static_configs:
+      - targets: ["mneme-core:9090"]
+        labels:
+          role: "core"
+
+  - job_name: "mneme-keepers"
+    static_configs:
+      - targets:
+          - "mneme-keeper-1:9090"
+          - "mneme-keeper-2:9090"
+          - "mneme-keeper-3:9090"
+        labels:
+          role: "keeper"
+
+  - job_name: "mneme-replicas"
+    static_configs:
+      - targets:
+          - "mneme-replica:9090"
+          - "mneme-replica-2:9090"
+        labels:
+          role: "replica"

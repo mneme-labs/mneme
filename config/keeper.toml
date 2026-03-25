@@ -1,0 +1,53 @@
+# MnemeCache — Keeper node (Hypnos) configuration template
+# Copy to /etc/mneme/mneme.toml on each keeper node and edit.
+#
+# Register with the cluster (one command):
+#   mneme-keeper join --core <core-ip>:7379 --grant 250mb --id hypnos-2
+#
+# The join_token is printed by `mneme-core init` on the Core node.
+
+[node]
+role         = "keeper"
+node_id      = "hypnos-2"       # Unique string ID — must differ from every other node
+bind         = "0.0.0.0"
+port         = 6379             # Not used by keeper; kept for config uniformity
+rep_port     = 7379             # mTLS replication port — Mnemosyne connects here
+metrics_port = 9090             # Prometheus endpoint per keeper
+io_threads   = 0
+join_token   = ""               # Provided by `mneme-core init` on the Core node
+
+[memory]
+pool_bytes          = "512mb"   # RAM grant offered to the logical pool
+eviction_threshold  = 0.90
+huge_pages          = false     # Keepers don't need huge pages by default
+promotion_threshold = 10
+
+[cluster]
+heartbeat_ms      = 500
+election_min_ms   = 1500
+election_max_ms   = 3000
+quorum_timeout_ms = 200
+
+[read_replicas]
+enabled      = false
+lag_alert_ms = 50
+
+[persistence]
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60        # Melete snapshot every 60 s
+wal_max_mb          = 256       # Aoide WAL rotation threshold (256 MB)
+wal_compression     = "zstd"   # Archive old segments as mneme.wal.N.zst
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/etc/mneme/ca.crt"   # Must match CA used by core node
+auto_generate = true
+
+[auth]
+users_db    = "/var/lib/mneme/users.db"
+token_ttl_h = 24
+
+[logging]
+level  = "info"
+format = "json"

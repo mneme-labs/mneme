@@ -1,0 +1,26 @@
+# MnemeCache — CI test runner
+#
+# Builds the `tester` stage and runs all tests inside the Linux container.
+# The `tester` stage compiles on Linux so io-uring and perf-event are available.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+#   # Exit code reflects whether tests passed.
+#
+# In GitHub Actions / CI:
+#   - name: Run tests
+#     run: |
+#       docker compose -f docker-compose.test.yml up \
+#         --build --abort-on-container-exit --exit-code-from tests
+
+services:
+  tests:
+    build:
+      context: .
+      target: tester          # runs all cargo tests during the build stage,
+                              # this service just confirms the image was built
+    image: mnemecache-tester:latest
+    container_name: mneme-tests
+    # The tester stage exits after all test RUN commands succeed.
+    # If any test fails, the build itself fails (non-zero exit from `docker build`).
+    command: echo "All tests passed during image build"

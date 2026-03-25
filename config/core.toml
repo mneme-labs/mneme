@@ -1,0 +1,54 @@
+# MnemeCache — Core node (Mnemosyne) configuration template
+# Copy to /etc/mneme/mneme.toml and edit before starting.
+#
+# Bootstrap first node:
+#   mneme-core init --id mnemosyne-1 --bind 0.0.0.0 --port 6379
+#   → prints join_token — share with all joining nodes
+
+[node]
+role         = "core"
+node_id      = "mnemosyne-1"     # Unique string ID across the cluster
+bind         = "0.0.0.0"
+port         = 6379              # TLS 1.3 client port
+rep_port     = 7379              # mTLS replication port (Hermes)
+metrics_port = 9090              # Prometheus /metrics endpoint
+io_threads   = 0                 # 0 = one io_uring ring per CPU core
+join_token   = ""                # Printed by `mneme-core init`
+
+[memory]
+pool_bytes          = "1gb"      # Local RAM pool — increase for production
+eviction_threshold  = 0.90       # Lethe activates LFU eviction at 90% usage
+huge_pages          = true       # mmap(MAP_HUGETLB) — requires vm.nr_hugepages
+promotion_threshold = 10         # LFU counter threshold for cold → hot promotion
+
+[cluster]
+heartbeat_ms      = 500
+election_min_ms   = 1500
+election_max_ms   = 3000
+quorum_timeout_ms = 200
+
+[read_replicas]
+enabled      = true
+lag_alert_ms = 50    # Aletheia alerts if replication lag exceeds 50 ms
+
+[persistence]
+# Core node itself does not write persistence files.
+# These settings apply when role = "solo".
+wal_dir             = "/var/lib/mneme"
+snapshot_interval_s = 60
+wal_max_mb          = 256        # WAL rotation threshold
+wal_compression     = "zstd"    # Archive old WAL segments with zstd
+
+[tls]
+cert          = "/var/lib/mneme/node.crt"
+key           = "/var/lib/mneme/node.key"
+ca_cert       = "/etc/mneme/ca.crt"      # Written on first boot; copy to Keepers
+auto_generate = true                      # rcgen auto-generates certs on first boot
+
+[auth]
+users_db    = "/var/lib/mneme/users.db"
+token_ttl_h = 24                 # Token lifetime in hours
+
+[logging]
+level  = "info"    # debug | info | warn | error
+format = "json"    # json | pretty

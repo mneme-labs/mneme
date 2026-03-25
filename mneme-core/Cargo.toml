@@ -1,0 +1,55 @@
+[package]
+name = "mneme-core"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mneme-core"
+path = "src/main.rs"
+
+[lib]
+name = "mneme_core"
+path = "src/lib.rs"
+
+[dependencies]
+mneme-common = { path = "../mneme-common" }
+mneme-keeper = { path = "../mneme-keeper" }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+pbkdf2 = { workspace = true }
+rmp-serde = { workspace = true }
+serde = { workspace = true }
+serde_bytes = { workspace = true }
+bytes = { workspace = true }
+crc = { workspace = true }
+ahash = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam-epoch = { workspace = true }
+dashmap = { workspace = true }
+openraft = { workspace = true }
+toml = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+prometheus = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+once_cell = { workspace = true }
+rand = { workspace = true }
+libc = { workspace = true }
+async-trait = "0.1"
+serde_json = "1"
+
+# Linux-only: perf-event wraps perf_event_open(2).
+# On macOS/Windows Aletheia silently disables hardware counters.
+[target.'cfg(target_os = "linux")'.dependencies]
+perf-event = { workspace = true }
