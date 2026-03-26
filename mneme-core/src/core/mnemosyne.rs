@@ -2263,6 +2263,7 @@ impl Mnemosyne {
             sync.node_name.clone()
         };
         let handle = self.hermes.connect_to_keeper(sync.node_id, keeper_repl_addr.clone());
+        let handle_for_replay = handle.clone();
         self.moirai.add_keeper(handle, node_name, keeper_repl_addr, sync.pool_bytes);
 
         // BUG-7 fix: if Core is already Hot (a previous full warm-up completed),
@@ -2408,6 +2409,68 @@ impl Mnemosyne {
                             pushed_keys = pushed,
                             "Keeper re-synced after reconnect (node already hot — warmup gate unchanged)"
                         );
+                        // Read-replica reconnect: key_count==0 means the reconnecting node is
+                        // a read replica (replicas never push keys to Core). Push the entire
+                        // current hot pool to it so it has a fresh snapshot.
+                        if sync.key_count == 0 {
+                            let me2 = self.clone();
+                            let h = handle_for_replay.clone();
+                            // Collect frames without holding the shard locks across await.
+                            let now = now_ms();
+                            let mut frames: Vec<Frame> = Vec::new();
+                            for shard in &me2.pool.shards {
+                                let guard = shard.read();
+                                for (key, entry) in guard.iter() {
+                                    if entry.is_expired(now) {
+                                        continue;
+                                    }
+                                    let db_id = u16::from_be_bytes([key[0], key[1]]);
+                                    let ttl_ms = if entry.expires_at_ms == 0 {
+                                        0
+                                    } else {
+                                        entry.expires_at_ms.saturating_sub(now)
+                                    };
+                                    let push = PushKeyPayload {
+                                        key: key.clone(),
+                                        value: entry.value.clone(),
+                                        seq: 0,
+                                        ttl_ms,
+                                        slot: entry.slot,
+                                        deleted: false,
+                                        db_id,
+                                    };
+                                    if let Ok(bytes) = rmp_serde::to_vec(&push) {
+                                        frames.push(Frame {
+                                            cmd_id: CmdId::PushKey,
+                                            flags: 0,
+                                            req_id: 0,
+                                            payload: Bytes::from(bytes),
+                                        });
+                                    }
+                                }
+                                // guard dropped here — lock released before next iteration
+                            }
+                            let total = frames.len();
+                            tokio::spawn(async move {
+                                let mut pushed_count = 0u64;
+                                for frame in frames {
+                                    let (ack_tx, _ack_rx) = tokio::sync::mpsc::channel(1);
+                                    if h.tx.send((frame, ack_tx)).await.is_err() {
+                                        // Replica disconnected mid-replay — abort.
+                                        warn!(node_id = h.node_id, pushed = pushed_count,
+                                            "Replica disconnected during full-pool replay");
+                                        return;
+                                    }
+                                    pushed_count += 1;
+                                }
+                                info!(
+                                    node_id = h.node_id,
+                                    pushed = pushed_count,
+                                    total,
+                                    "Replica full-pool replay complete"
+                                );
+                            });
+                        }
                     }
                     stream.write_all(
                         &Frame::ok_response(bytes::Bytes::new()).encode()

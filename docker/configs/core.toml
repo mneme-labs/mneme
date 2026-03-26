@@ -39,8 +39,8 @@ cert          = "/var/lib/mneme/node.crt"
 key           = "/var/lib/mneme/node.key"
 ca_cert       = "/var/lib/mneme/ca.crt"
 auto_generate = true
-# Include the Docker service hostname so mneme-cli -H mneme-core:6379 works without --insecure
-extra_sans    = ["mneme-core"]
+# Include Docker service hostnames so mneme-cli -H <hostname>:<port> works without --insecure
+extra_sans    = ["mneme-core", "mneme-replica", "mneme-replica-2"]
 
 [auth]
 users_db       = "/var/lib/mneme/users.db"

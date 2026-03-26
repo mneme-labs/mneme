@@ -1370,6 +1370,24 @@ EXAMPLES:\n\
   echo 'GET otp' | mneme-cli -t TOK pipe"
     )]
     Pipe,
+
+    #[command(
+        about = "Interactive REPL: persistent connection with per-command timing.",
+        long_about = "REPL — interactive persistent-connection mode\n\
+\n\
+Opens a single TLS connection, then presents an interactive prompt.\n\
+Each command is sent over the existing connection (no TLS re-handshake),\n\
+so per-command latency is <2 ms — matching the in-memory p99 targets.\n\
+\n\
+Supports the same commands as pipe mode plus STATS, DBSIZE, SELECT,\n\
+MGET, MSET, HGET, HSET, SCAN, TYPE, FLUSHDB, and QUIT/EXIT.\n\
+Every response shows the wall-clock time for the round-trip.\n\
+\n\
+EXAMPLES:\n\
+  docker exec -it mneme-core mneme-cli -t TOK repl\n\
+  mneme-cli -u admin -p secret repl"
+    )]
+    Repl,
 }
 
 // ── main ───────────────────────────────────────────────────────────────────────
@@ -1453,6 +1471,11 @@ async fn main() -> Result<()> {
     // Pipe mode is handled specially — it loops over stdin and never calls run_command.
     if matches!(cli.cmd, Command::Pipe) {
         return run_pipe_mode(&mut conn, consistency_flags).await;
+    }
+
+    // REPL mode — interactive persistent connection with per-command timing.
+    if matches!(cli.cmd, Command::Repl) {
+        return run_repl_mode(&mut conn, consistency_flags).await;
     }
 
     // Execute command
@@ -1564,6 +1587,21 @@ fn handle_profile_cmd(cmd: &Command) -> Result<Option<String>> {
 
 struct Conn {
     stream: tokio_rustls::client::TlsStream<TcpStream>,
+    /// Frames queued for batch write — flushed on the next send_recv call.
+    pending_write: Vec<u8>,
+    /// Number of queued-frame responses to drain (and validate) before the
+    /// "real" command response.  Incremented by queue_frame(), reset by send_recv().
+    pending_responses: usize,
+}
+
+impl Conn {
+    /// Queue a frame for batched sending.  The frame is NOT written to the TLS
+    /// stream until the next send_recv() call, which flushes everything together
+    /// in a single write_all() — saving one RTT per queued frame.
+    fn queue_frame(&mut self, frame: Frame) {
+        self.pending_write.extend_from_slice(&frame.encode());
+        self.pending_responses += 1;
+    }
 }
 
 async fn connect(host: &str, ca_cert_path: &str, insecure: bool) -> Result<Conn> {
@@ -1606,7 +1644,7 @@ async fn connect(host: &str, ca_cert_path: &str, insecure: bool) -> Result<Conn>
         .map_err(|_| anyhow::anyhow!("invalid hostname: {hostname}"))?
         .to_owned();
     let tls = connector.connect(server_name, tcp).await?;
-    Ok(Conn { stream: tls })
+    Ok(Conn { stream: tls, pending_write: Vec::new(), pending_responses: 0 })
 }
 
 fn parse_host_port(addr: &str) -> Result<(String, u16)> {
@@ -1628,19 +1666,20 @@ fn parse_host_port(addr: &str) -> Result<(String, u16)> {
 ///   3. Username + password credentials (triggers PBKDF2 on the server; returned token is cached).
 async fn authenticate(conn: &mut Conn, eff: &EffectiveConfig) -> Result<()> {
     // ── 1. Explicit token ─────────────────────────────────────────────────
+    // Queue instead of send_recv: the Auth frame and the following command frame
+    // will be flushed together in one TCP write, saving 1 RTT (~7ms on Docker Desktop).
     if let Some(token) = &eff.token {
         let payload = rmp_serde::to_vec(token)?;
-        let resp = send_recv(conn, Frame { cmd_id: CmdId::Auth, flags: 0, req_id: 0,
-            payload: Bytes::from(payload) }).await?;
-        if resp.cmd_id != CmdId::Ok {
-            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
-            bail!("AUTH failed: {msg}");
-        }
-        debug!("Authenticated via explicit token");
+        conn.queue_frame(Frame { cmd_id: CmdId::Auth, flags: 0, req_id: 0,
+            payload: Bytes::from(payload) });
+        debug!("Auth frame queued (token) — will be pipelined with next command");
         return Ok(());
     }
 
     // ── 2. Cached token (fast path — skips PBKDF2 on server) ─────────────
+    // Kept synchronous: if the cached token is rejected we must fall through to path 3
+    // (PBKDF2 with credentials) and cache a fresh token.  Pipelining isn't safe here
+    // because we can't un-send the command frame if auth fails mid-fallback.
     if eff.username.is_some() || eff.password.is_some() {
         if let Some(cached) = load_cached_token(&eff.host) {
             let payload = rmp_serde::to_vec(&cached)?;
@@ -2399,8 +2438,8 @@ async fn run_command(conn: &mut Conn, cmd: &Command, cons_flags: u16, active_db:
             Ok(out)
         }
 
-        // Pipe is dispatched in main() before run_command; unreachable here.
-        Command::Pipe => Ok(String::new()),
+        // Pipe and Repl are dispatched in main() before run_command; unreachable here.
+        Command::Pipe | Command::Repl => Ok(String::new()),
 
         // Profile commands are handled before connect() in main(); these
         // branches are unreachable at runtime but required for match exhaustion.
@@ -2524,6 +2563,271 @@ async fn run_pipe_mode(conn: &mut Conn, cons_flags: u16) -> Result<()> {
     Ok(())
 }
 
+// ── REPL (interactive) mode ────────────────────────────────────────────────
+
+/// Interactive REPL: single persistent TLS connection, per-command timing.
+async fn run_repl_mode(conn: &mut Conn, cons_flags: u16) -> Result<()> {
+    use std::io::{Write, BufRead};
+    use std::time::Instant;
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let is_tty = stdin_is_tty();
+
+    if is_tty {
+        println!("mneme REPL  (persistent TLS connection — type HELP for commands, QUIT to exit)");
+    }
+
+    loop {
+        if is_tty {
+            print!("mneme> ");
+            stdout.lock().flush().ok();
+        }
+
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line)? == 0 {
+            break; // EOF
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
+        let cmd_word = parts[0].to_ascii_uppercase();
+
+        match cmd_word.as_str() {
+            "QUIT" | "EXIT" => break,
+            "HELP" => {
+                println!("  GET <key>                   SET <key> <value> [TTL <s>]");
+                println!("  DEL <key> [<key>...]        EXISTS <key>");
+                println!("  TTL <key>                   EXPIRE <key> <secs>");
+                println!("  INCR <key>                  DECR <key>");
+                println!("  MGET <k1> <k2> ...          MSET <k1> <v1> [k2 v2 ...]");
+                println!("  HGET <key> <field>          HSET <key> <field> <value>");
+                println!("  SCAN [cursor] [MATCH pat]   TYPE <key>");
+                println!("  SELECT <db>                 DBSIZE");
+                println!("  STATS                       PING");
+                println!("  FLUSHDB                     QUIT / EXIT");
+                continue;
+            }
+            _ => {}
+        }
+
+        let t0 = Instant::now();
+        let out = execute_repl_cmd(conn, trimmed, &parts, &cmd_word, cons_flags).await;
+        let elapsed = t0.elapsed();
+
+        match out {
+            Ok(s)  => println!("{s}  ({:.2}ms)", elapsed.as_secs_f64() * 1000.0),
+            Err(e) => println!("ERR {e}"),
+        }
+    }
+    Ok(())
+}
+
+/// Execute a single REPL command. Covers everything pipe mode supports plus
+/// STATS, DBSIZE, SELECT, MGET, MSET, HGET, HSET, SCAN, TYPE, EXPIRE, FLUSHDB.
+async fn execute_repl_cmd(
+    conn: &mut Conn,
+    trimmed: &str,
+    parts: &[&str],
+    cmd_word: &str,
+    cons_flags: u16,
+) -> Result<String> {
+    use mneme_common::*;
+
+    match cmd_word {
+        "PING" => {
+            send_raw(conn, CmdId::Stats, rmp_serde::to_vec(&())?, 0).await
+                .map(|_| "PONG".into())
+        }
+        "GET" => {
+            if parts.len() < 2 { bail!("GET: missing key"); }
+            let req = GetRequest { key: parts[1].as_bytes().to_vec() };
+            let resp = send_cmd(conn, CmdId::Get, &req, 0).await?;
+            let v: Value = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format_value(&v))
+        }
+        "SET" => {
+            if parts.len() < 3 { bail!("SET: missing key/value"); }
+            let after_key = trimmed.splitn(3, ' ').nth(2).unwrap_or("");
+            let (val_part, ttl_ms) = if let Some(idx) = after_key.to_ascii_uppercase().find(" TTL ") {
+                let val = &after_key[..idx];
+                let secs: u64 = after_key[idx + 5..].trim().parse().unwrap_or(0);
+                (val, secs * 1000)
+            } else {
+                (after_key, 0u64)
+            };
+            let req = SetRequest {
+                key: parts[1].as_bytes().to_vec(),
+                value: Value::String(val_part.as_bytes().to_vec()),
+                ttl_ms,
+            };
+            send_cmd(conn, CmdId::Set, &req, cons_flags).await
+                .map(|resp| rmp_serde::from_slice::<String>(&resp.payload).unwrap_or_else(|_| "OK".into()))
+        }
+        "DEL" => {
+            if parts.len() < 2 { bail!("DEL: missing key"); }
+            let keys: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
+            let req = DelRequest { keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect() };
+            let resp = send_cmd(conn, CmdId::Del, &req, cons_flags).await?;
+            let n: u64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {n}"))
+        }
+        "EXISTS" => {
+            if parts.len() < 2 { bail!("EXISTS: missing key"); }
+            let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+            let resp = send_raw(conn, CmdId::Exists, payload, 0).await?;
+            let exists: bool = rmp_serde::from_slice(&resp.payload)?;
+            Ok(if exists { "(integer) 1" } else { "(integer) 0" }.into())
+        }
+        "TTL" => {
+            if parts.len() < 2 { bail!("TTL: missing key"); }
+            let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+            let resp = send_raw(conn, CmdId::Ttl, payload, 0).await?;
+            let secs: i64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {secs}"))
+        }
+        "EXPIRE" => {
+            if parts.len() < 3 { bail!("EXPIRE: missing key and/or seconds"); }
+            let secs: u64 = parts[2].parse().unwrap_or(0);
+            let req = ExpireRequest { key: parts[1].as_bytes().to_vec(), seconds: secs };
+            let resp = send_cmd(conn, CmdId::Expire, &req, cons_flags).await?;
+            let n: u64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {n}"))
+        }
+        "INCR" => {
+            if parts.len() < 2 { bail!("INCR: missing key"); }
+            let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+            let resp = send_raw(conn, CmdId::Incr, payload, cons_flags).await?;
+            let n: i64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {n}"))
+        }
+        "DECR" => {
+            if parts.len() < 2 { bail!("DECR: missing key"); }
+            let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+            let resp = send_raw(conn, CmdId::Decr, payload, cons_flags).await?;
+            let n: i64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {n}"))
+        }
+        "STATS" => {
+            let payload = rmp_serde::to_vec(&())?;
+            let resp = send_raw(conn, CmdId::Stats, payload, 0).await?;
+            // Stats response is a pre-formatted string.
+            let s: String = rmp_serde::from_slice(&resp.payload)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&resp.payload).to_string());
+            Ok(s)
+        }
+        "DBSIZE" => {
+            let req = DbSizeRequest { db_id: None, name: String::new() };
+            let resp = send_cmd(conn, CmdId::DbSize, &req, 0).await?;
+            let n: u64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("(integer) {n}"))
+        }
+        "SELECT" => {
+            if parts.len() < 2 { bail!("SELECT: missing db"); }
+            let raw = parts[1];
+            let req = if let Ok(n) = raw.parse::<u16>() {
+                SelectRequest { db_id: n, name: String::new() }
+            } else {
+                SelectRequest { db_id: 0, name: raw.to_string() }
+            };
+            let resp = send_cmd(conn, CmdId::Select, &req, 0).await?;
+            Ok(rmp_serde::from_slice::<String>(&resp.payload).unwrap_or_else(|_| "OK".into()))
+        }
+        "MGET" => {
+            let keys: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
+            if keys.is_empty() { bail!("MGET: missing keys"); }
+            let req = MGetRequest { keys: keys.iter().map(|k| k.as_bytes().to_vec()).collect() };
+            let resp = send_cmd(conn, CmdId::MGet, &req, 0).await?;
+            let vals: Vec<Option<Value>> = rmp_serde::from_slice(&resp.payload)?;
+            let mut out = String::new();
+            for (i, v) in vals.iter().enumerate() {
+                match v {
+                    Some(val) => out.push_str(&format!("{}) {}\n", i + 1, format_value(val))),
+                    None => out.push_str(&format!("{}) (nil)\n", i + 1)),
+                }
+            }
+            Ok(out.trim_end().to_string())
+        }
+        "MSET" => {
+            let tokens: Vec<&str> = trimmed.split_whitespace().skip(1).collect();
+            if tokens.len() < 2 || tokens.len() % 2 != 0 { bail!("MSET: need key value pairs"); }
+            let pairs: Vec<(Vec<u8>, Value, u64)> = tokens.chunks(2)
+                .map(|c| (c[0].as_bytes().to_vec(), Value::String(c[1].as_bytes().to_vec()), 0u64))
+                .collect();
+            let req = MSetRequest { pairs };
+            let resp = send_cmd(conn, CmdId::MSet, &req, cons_flags).await?;
+            Ok(rmp_serde::from_slice::<String>(&resp.payload).unwrap_or_else(|_| "OK".into()))
+        }
+        "HGET" => {
+            if parts.len() < 3 { bail!("HGET: need key and field"); }
+            let req = HGetRequest {
+                key: parts[1].as_bytes().to_vec(),
+                field: parts[2].as_bytes().to_vec(),
+            };
+            let resp = send_cmd(conn, CmdId::HGet, &req, 0).await?;
+            let v: Value = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format_value(&v))
+        }
+        "HSET" => {
+            if parts.len() < 4 { bail!("HSET: need key field value"); }
+            let req = HSetRequest {
+                key: parts[1].as_bytes().to_vec(),
+                pairs: vec![(parts[2].as_bytes().to_vec(), parts[3].as_bytes().to_vec())],
+            };
+            let resp = send_cmd(conn, CmdId::HSet, &req, cons_flags).await?;
+            Ok(rmp_serde::from_slice::<String>(&resp.payload).unwrap_or_else(|_| "OK".into()))
+        }
+        "SCAN" => {
+            let cursor: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let pattern = if parts.len() >= 4 && parts[2].to_ascii_uppercase() == "MATCH" {
+                Some(parts[3].to_string())
+            } else {
+                None
+            };
+            let req = ScanRequest { cursor, pattern, count: 10 };
+            let resp = send_cmd(conn, CmdId::Scan, &req, 0).await?;
+            let (next_cursor, keys): (u64, Vec<Vec<u8>>) = rmp_serde::from_slice(&resp.payload)?;
+            let mut out = format!("cursor: {next_cursor}\n");
+            for (i, k) in keys.iter().enumerate() {
+                out.push_str(&format!("{}) {}\n", i + 1, String::from_utf8_lossy(k)));
+            }
+            Ok(out.trim_end().to_string())
+        }
+        "TYPE" => {
+            if parts.len() < 2 { bail!("TYPE: missing key"); }
+            let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+            let resp = send_raw(conn, CmdId::Type, payload, 0).await?;
+            let t: String = rmp_serde::from_slice(&resp.payload)?;
+            Ok(t)
+        }
+        "FLUSHDB" => {
+            let req = FlushDbRequest { db_id: None, name: String::new(), sync: true };
+            let resp = send_cmd(conn, CmdId::FlushDb, &req, cons_flags).await?;
+            let n: u64 = rmp_serde::from_slice(&resp.payload)?;
+            Ok(format!("OK ({n} keys flushed)"))
+        }
+        other => bail!("unknown command '{other}' — type HELP for list"),
+    }
+}
+
+fn format_value_inline(v: &Value) -> String {
+    match v {
+        Value::String(b) => String::from_utf8_lossy(b).to_string(),
+        Value::Counter(n) => n.to_string(),
+        _ => format!("{v:?}"),
+    }
+}
+
+/// Check if stdin is a terminal (for interactive REPL prompt).
+fn stdin_is_tty() -> bool {
+    extern "C" { fn isatty(fd: std::ffi::c_int) -> std::ffi::c_int; }
+    use std::os::unix::io::AsRawFd;
+    // SAFETY: isatty is a POSIX function safe to call on any fd.
+    unsafe { isatty(std::io::stdin().as_raw_fd()) != 0 }
+}
+
 // ── transport helpers ──────────────────────────────────────────────────────────
 
 async fn send_cmd<T: serde::Serialize>(
@@ -2541,23 +2845,46 @@ async fn send_raw(conn: &mut Conn, cmd: CmdId, payload: Vec<u8>, flags: u16) -> 
     send_recv(conn, frame).await
 }
 
-async fn send_recv(conn: &mut Conn, frame: Frame) -> Result<Frame> {
-    conn.stream.write_all(&frame.encode()).await?;
-
+/// Read exactly one complete frame from the connection stream.
+async fn recv_one(stream: &mut tokio_rustls::client::TlsStream<TcpStream>) -> Result<Frame> {
     let mut buf = BytesMut::with_capacity(4096);
     loop {
         if buf.len() >= FRAME_HEADER {
-            // payload_len is at header bytes [8..12]; req_id at [12..16]
             let plen = u32::from_be_bytes(buf[8..12].try_into().unwrap()) as usize;
             if buf.len() >= FRAME_HEADER + plen {
                 break;
             }
         }
-        let n = conn.stream.read_buf(&mut buf).await?;
+        let n = stream.read_buf(&mut buf).await?;
         if n == 0 { bail!("connection closed"); }
     }
+    let (frame, _) = Frame::decode(&buf).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(frame)
+}
 
-    let (resp, _) = Frame::decode(&buf).map_err(|e| anyhow::anyhow!("{e}"))?;
+async fn send_recv(conn: &mut Conn, frame: Frame) -> Result<Frame> {
+    // Flush any pending (queued) frames together with this one in a single write_all.
+    // This batches auth + command into one TCP segment, saving 1 RTT.
+    if !conn.pending_write.is_empty() {
+        let mut combined = std::mem::take(&mut conn.pending_write);
+        combined.extend_from_slice(&frame.encode());
+        conn.stream.write_all(&combined).await?;
+    } else {
+        conn.stream.write_all(&frame.encode()).await?;
+    }
+
+    // Drain queued responses (e.g. the Auth OK that was queued in authenticate()).
+    // Validate each — if any fails (e.g. token rejected), bail before the real command.
+    let n_pending = std::mem::replace(&mut conn.pending_responses, 0);
+    for _ in 0..n_pending {
+        let queued_resp = recv_one(&mut conn.stream).await?;
+        if queued_resp.cmd_id != CmdId::Ok {
+            let msg: String = rmp_serde::from_slice(&queued_resp.payload).unwrap_or_default();
+            bail!("AUTH failed: {msg}");
+        }
+    }
+
+    let resp = recv_one(&mut conn.stream).await?;
     if resp.cmd_id == CmdId::LeaderRedirect {
         let payload: mneme_common::LeaderRedirectPayload =
             rmp_serde::from_slice(&resp.payload).unwrap_or(mneme_common::LeaderRedirectPayload {
