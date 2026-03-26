@@ -5,10 +5,12 @@ use bytes::Bytes;
 use mneme_common::{
     CmdId, ConfigSetRequest, UserCreateRequest, UserDeleteRequest,
     UserGrantRequest, UserInfoRequest, UserRevokeRequest, UserSetRoleRequest,
+    WaitRequest,
 };
+use tokio::sync::mpsc;
 
 use crate::conn::{check_ok, MnemeConn, Consistency};
-use crate::response::{KeeperEntry, PoolStats, SlowLogEntry, UserInfo};
+use crate::response::{KeeperEntry, MonitorStream, PoolStats, SlotRange, SlowLogEntry, UserInfo};
 
 impl MnemeConn {
     // ── User management ───────────────────────────────────────────────────────
@@ -238,5 +240,91 @@ impl MnemeConn {
         let payload = Bytes::from(rmp_serde::to_vec(&req)?);
         let resp = self.send(CmdId::Config, payload, Consistency::Quorum).await?;
         check_ok(&resp)
+    }
+
+    /// WAIT — block until `n_keepers` Keeper nodes have acknowledged all
+    /// outstanding writes, or until `timeout_ms` elapses.
+    ///
+    /// Returns the number of Keepers that ACKed in time. Use this to ensure
+    /// durability before reading from a replica or returning to a caller.
+    ///
+    /// ```no_run
+    /// // Ensure at least 2 keepers have flushed before proceeding.
+    /// let acked = conn.wait(2, 5000).await?;
+    /// assert!(acked >= 2, "not enough keepers flushed in time");
+    /// ```
+    pub async fn wait(&self, n_keepers: usize, timeout_ms: u64) -> Result<u64> {
+        let req = WaitRequest { n_keepers, timeout_ms };
+        let payload = Bytes::from(rmp_serde::to_vec(&req)?);
+        let resp = self.send(CmdId::Wait, payload, Consistency::Eventual).await?;
+        if resp.cmd_id == CmdId::Error {
+            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+            bail!("{msg}");
+        }
+        let n: u64 = rmp_serde::from_slice(&resp.payload).unwrap_or(0);
+        Ok(n)
+    }
+
+    /// CLUSTER-SLOTS — return the slot-to-node assignment table.
+    ///
+    /// Each [`SlotRange`] entry contains a contiguous range of slots (0–16383)
+    /// and the Core node address that owns them. Use this to implement
+    /// client-side slot-aware routing.
+    ///
+    /// In a single-Core deployment all 16384 slots belong to one entry.
+    pub async fn cluster_slots(&self) -> Result<Vec<SlotRange>> {
+        let payload = Bytes::from(rmp_serde::to_vec(&())?);
+        let resp = self.send(CmdId::ClusterSlots, payload, Consistency::Eventual).await?;
+        if resp.cmd_id == CmdId::Error {
+            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+            bail!("{msg}");
+        }
+        let raw: Vec<(u16, u16, String)> =
+            rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+        Ok(raw.into_iter()
+            .map(|(start, end, addr)| SlotRange { start, end, addr })
+            .collect())
+    }
+
+    /// GENERATE-JOIN-TOKEN — mint a one-time Keeper join token.
+    ///
+    /// The returned token is passed to `mneme-keeper --join-token <TOKEN>` when
+    /// adding a new Keeper (or read-replica) to the cluster.  Tokens are
+    /// single-use and expire after `auth.join_token_ttl_s` seconds (default 300).
+    ///
+    /// Caller must have **admin** role.
+    pub async fn generate_join_token(&self) -> Result<String> {
+        let payload = Bytes::from(rmp_serde::to_vec(&())?);
+        let resp = self.send(CmdId::GenerateJoinToken, payload, Consistency::Quorum).await?;
+        if resp.cmd_id == CmdId::Error {
+            let msg: String = rmp_serde::from_slice(&resp.payload).unwrap_or_default();
+            bail!("{msg}");
+        }
+        let token: String = rmp_serde::from_slice(&resp.payload)?;
+        Ok(token)
+    }
+
+    /// MONITOR — subscribe to the real-time command stream.
+    ///
+    /// After calling this, the server pushes one message per executed command
+    /// (format: `"<timestamp_ms> <cmd> <key>"`). Poll the returned
+    /// [`MonitorStream`] with `.next().await`.
+    ///
+    /// **Use a dedicated connection** — other commands sent on the same
+    /// connection while monitoring is active will behave unexpectedly.
+    ///
+    /// ```no_run
+    /// let mut stream = conn.monitor().await?;
+    /// while let Some(event) = stream.next().await {
+    ///     println!("{event}");
+    /// }
+    /// ```
+    pub async fn monitor(&self) -> Result<MonitorStream> {
+        let (tx, rx) = mpsc::channel(256);
+        *self.monitor_tx.lock() = Some(tx);
+        let payload = Bytes::from(rmp_serde::to_vec(&())?);
+        // We expect an Ok ACK from the server before it starts streaming.
+        self.send(CmdId::Monitor, payload, Consistency::Eventual).await?;
+        Ok(MonitorStream { rx })
     }
 }

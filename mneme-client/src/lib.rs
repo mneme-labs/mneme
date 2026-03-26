@@ -3,6 +3,7 @@
 // Public surface:
 //   MnemePool / PoolConfig  — connection pool with health-check + auto-reconnect
 //   MnemeConn / Consistency — raw multiplexed connection (impl split across cmd_*.rs)
+//   Pipeline                — batch multiple commands in one write
 //   ClientError             — error type
 //   response::*             — typed response structs (KeeperEntry, PoolStats, …)
 
@@ -18,12 +19,16 @@ mod cmd_list;
 mod cmd_zset;
 
 // ── Public modules ────────────────────────────────────────────────────────────
+pub mod cmd_pipeline;
 pub mod error;
 pub mod pool;
 pub mod response;
 
 // ── Re-exports ────────────────────────────────────────────────────────────────
+pub use cmd_pipeline::Pipeline;
 pub use conn::{Consistency, MnemeConn};
 pub use error::ClientError;
 pub use pool::{MnemePool, PoolConfig, PoolGuard};
-pub use response::{KeeperEntry, PoolStats, ScanPage, SlowLogEntry, UserInfo};
+pub use response::{
+    KeeperEntry, MonitorStream, PoolStats, ScanPage, SlotRange, SlowLogEntry, UserInfo,
+};

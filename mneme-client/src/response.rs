@@ -2,6 +2,7 @@
 // These mirror what the server serialises as msgpack in the response payload.
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
 // ── Cluster / admin ────────────────────────────────────────────────────────────
 
@@ -55,4 +56,49 @@ pub struct UserInfo {
 pub struct ScanPage {
     pub next_cursor: u64,
     pub keys:        Vec<Vec<u8>>,
+}
+
+// ── Cluster ────────────────────────────────────────────────────────────────────
+
+/// One entry from a CLUSTER-SLOTS response.
+///
+/// Represents a contiguous range of hash slots [start, end] (inclusive) owned
+/// by a single Core node. In a single-Core deployment there will be exactly
+/// one entry covering all 16384 slots.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlotRange {
+    /// First slot in this range (0–16383).
+    pub start: u16,
+    /// Last slot in this range (inclusive).
+    pub end:   u16,
+    /// Client-facing address of the Core node that owns these slots.
+    pub addr:  String,
+}
+
+// ── Monitor stream ─────────────────────────────────────────────────────────────
+
+/// Live command stream returned by [`MnemeConn::monitor`].
+///
+/// Each call to [`next`] returns one event string pushed by the server.
+/// Returns `None` when the connection closes.
+///
+/// [`next`]: MonitorStream::next
+pub struct MonitorStream {
+    pub(crate) rx: mpsc::Receiver<String>,
+}
+
+impl MonitorStream {
+    /// Receive the next monitor event.
+    ///
+    /// Blocks until an event is available or the connection closes.
+    pub async fn next(&mut self) -> Option<String> {
+        self.rx.recv().await
+    }
+
+    /// Try to receive the next monitor event without blocking.
+    ///
+    /// Returns `None` if no event is currently available.
+    pub fn try_next(&mut self) -> Option<String> {
+        self.rx.try_recv().ok()
+    }
 }

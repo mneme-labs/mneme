@@ -1,327 +1,993 @@
-# MnemeCache — Wire Protocol and Command Reference
+# MnemeCache — Command Reference
 
-This document describes the binary wire protocol, command set, error codes, and payload limits for MnemeCache. All communication (client-to-God and God-to-Keeper) uses this protocol over TLS 1.3. The client library (Pontus) handles framing automatically; consult this document when implementing a new client or debugging raw connections.
-
----
-
-## Wire Protocol Header (16 bytes)
-
-Every request and response begins with a fixed 16-byte header followed by a msgpack-encoded payload.
-
-```
-Offset  Size  Field         Description
-------  ----  -----------   --------------------------------------------------
-0       4     magic         0x4D4E454D  ("MNEM" in ASCII)
-4       1     version       Protocol version = 0x01
-5       1     cmd_id        Command identifier (see Command Reference below)
-6       2     flags         bits 15–4: slot hint | bits 3–2: consistency | bits 1–0: reserved
-8       4     payload_len   Length of msgpack payload in bytes (0 if no payload)
-12      4     req_id        0 = single-plex, ≥1 = multiplexed (responses out-of-order)
-```
-
-### Flags field breakdown
-
-```
-Bit:  15  14  13  12  11  10  9   8   7   6   5   4  |  3   2  |  1   0
-      [         slot hint (12 bits)               ]  | [cons] | [ rsvd ]
-```
-
-- **Slot hint (bits 15–4):** Pre-computed `CRC16(key) % 16384`. The router (Iris) validates and may override. Set to 0 if unknown; Iris will compute.
-- **Consistency (bits 3–2):**
-
-| Bits | Value | Meaning |
-|------|-------|---------|
-| `00` | EVENTUAL | Read replica if available; fire-and-forget writes. AP mode. |
-| `01` | QUORUM | `floor(N/2)+1` Keeper ACKs required. CP mode. **Default.** |
-| `10` | ALL | Every Keeper must ACK. Highest durability, highest latency. |
-| `11` | ONE | First Keeper ACK. Lowest latency durable write. |
-
-- **Reserved (bits 1–0):** Must be zero. Reserved for future use.
-
-### Request multiplexing
-
-When `req_id >= 1`, multiple requests may be outstanding on a single connection simultaneously. Responses are returned out-of-order; match them by `req_id`. The Pontus client library manages a `DashMap<req_id, oneshot::Sender<Response>>` internally.
-
-Use `req_id = 0` only for single-request connections or when strict ordering is required.
+Complete command reference for the MnemeCache wire protocol. For the
+framing format, consistency levels, auth flow, and multiplexing specification
+see [CLIENT_PROTOCOL.md](CLIENT_PROTOCOL.md). For the Rust client library
+usage guide see [../mneme-client/README.md](../mneme-client/README.md).
 
 ---
 
-## Command Reference
+## Wire Header (16 bytes)
 
-### String Commands (0x01 – 0x06)
+```
+[4B magic 0x4D4E454D][1B ver=0x01][1B cmd_id][2B flags][4B payload_len][4B req_id][msgpack payload]
+```
 
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x01` | GET | `key: bytes` | `value: Value` | Returns `KeyNotFound` if key absent or expired |
-| `0x02` | SET | `SetRequest` | `"OK"` | Overwrites existing value and TTL |
-| `0x03` | DEL | `DelRequest` | `count: u64` | Bulk delete; count = number of keys that existed |
-| `0x04` | EXISTS | `key: bytes` | `bool` | True only if key is present and not expired |
-| `0x05` | EXPIRE | `ExpireRequest` | `applied: u64` | 1 if TTL was set, 0 if key not found |
-| `0x06` | TTL | `key: bytes` | `seconds: i64` | -1 = no expiry, -2 = key missing |
+Flags bits 15–4 = slot hint (CRC16(key) % 16384)
+Flags bits 3–2  = consistency (00=EVENTUAL 01=QUORUM 10=ALL 11=ONE)
+req_id = 0 → single-plex; ≥1 → multiplexed (responses may arrive out-of-order)
 
-**Payload schemas:**
+---
 
+## String / KV Commands
+
+### GET — 0x01
+
+Fetch the value stored at `key`.
+
+**Request**
 ```rust
-// SET
+struct GetRequest { key: bytes }
+```
+
+**Response** — `Value` payload on success, `Error(KeyNotFound)` if absent or expired.
+
+**Notes:** Works with all value types. Returns the raw `Value` enum variant.
+
+---
+
+### SET — 0x02
+
+Store a value with an optional TTL.
+
+**Request**
+```rust
 struct SetRequest {
     key:    bytes,
-    value:  bytes,
-    ttl_ms: Option<u64>,   // None = no expiry
-}
-
-// DEL
-struct DelRequest {
-    keys: Vec<bytes>,      // max 1,000 keys per request
-}
-
-// EXPIRE
-struct ExpireRequest {
-    key:     bytes,
-    seconds: u64,
+    value:  Value,
+    ttl_ms: u64,   // 0 = no expiry; milliseconds
 }
 ```
 
+**Response** — `"OK"` string.
+
+**Notes:** Overwrites any existing value and TTL. The TTL is replicated to Keepers
+as an absolute `expiry_at` timestamp, so keys expired during a Keeper restart are
+deleted immediately on reconnect rather than serving stale data.
+
 ---
 
-### Hash Commands (0x10 – 0x13)
+### DEL — 0x03
 
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x10` | HSET | `HSetRequest` | `added: u64` | Upserts fields; count = new fields only |
-| `0x11` | HGET | `HGetRequest` | `value: bytes` | Returns `KeyNotFound` if key or field absent |
-| `0x12` | HDEL | `HDelRequest` | `deleted: u64` | Count of fields actually removed |
-| `0x13` | HGETALL | `key: bytes` | `Vec<(field: bytes, value: bytes)>` | Returns empty vec if key absent |
+Delete one or more keys.
 
-**Payload schemas:**
-
+**Request**
 ```rust
-// HSET
+struct DelRequest { keys: Vec<bytes> }   // max 1 000 keys
+```
+
+**Response** — `u64` count of keys that existed.
+
+---
+
+### EXISTS — 0x04
+
+Check whether a key exists (and has not expired).
+
+**Request** — `bytes` (raw key)
+
+**Response** — `bool`
+
+---
+
+### EXPIRE — 0x05
+
+Set a TTL on an existing key.
+
+**Request**
+```rust
+struct ExpireRequest { key: bytes, seconds: u64 }
+```
+
+**Response** — `u64` (1 = TTL applied, 0 = key not found)
+
+---
+
+### TTL — 0x06
+
+Return the remaining TTL of a key.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `i64` milliseconds remaining.
+- `−1` = key exists but has no TTL (permanent)
+- `−2` = key does not exist
+
+---
+
+## Hash Commands
+
+### HSET — 0x10
+
+Set one or more fields on a hash key.
+
+**Request**
+```rust
 struct HSetRequest {
     key:   bytes,
-    pairs: Vec<(field: bytes, value: bytes)>,  // max 65,536 pairs per call
-}
-
-// HGET
-struct HGetRequest {
-    key:   bytes,
-    field: bytes,
-}
-
-// HDEL
-struct HDelRequest {
-    key:    bytes,
-    fields: Vec<bytes>,
+    pairs: Vec<(field: bytes, value: bytes)>,  // max 65 536 pairs
 }
 ```
 
----
-
-### List Commands (0x20 – 0x24)
-
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x20` | LPUSH | `LPushRequest{key, values: Vec<bytes>}` | `length: u64` | Prepend to list head |
-| `0x21` | RPUSH | `RPushRequest{key, values: Vec<bytes>}` | `length: u64` | Append to list tail |
-| `0x22` | LPOP | `LPopRequest{key, count: u64}` | `Vec<bytes>` | Pops up to count items from head |
-| `0x23` | RPOP | `RPopRequest{key, count: u64}` | `Vec<bytes>` | Pops up to count items from tail |
-| `0x24` | LRANGE | `LRangeRequest{key, start: i64, stop: i64}` | `Vec<bytes>` | Negative indexes count from end |
+**Response** — `"OK"` string.
 
 ---
 
-### Sorted Set Commands (0x30 – 0x36)
+### HGET — 0x11
 
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x30` | ZADD | `ZAddRequest{key, members: Vec<(score: f64, member: bytes)>}` | `added: u64` | Upserts; count = new members only |
-| `0x31` | ZREM | `ZRemRequest{key, members: Vec<bytes>}` | `removed: u64` | |
-| `0x32` | ZSCORE | `ZScoreRequest{key, member: bytes}` | `score: f64` | `KeyNotFound` if member absent |
-| `0x33` | ZRANK | `ZRankRequest{key, member: bytes}` | `rank: u64` | 0-indexed ascending rank |
-| `0x34` | ZRANGE | `ZRangeRequest{key, start: i64, stop: i64, withscores: bool}` | `Vec<bytes>` or `Vec<(bytes, f64)>` | |
-| `0x35` | ZRANGEBYSCORE | `ZRangeByScoreRequest{key, min: f64, max: f64, limit: Option<u64>}` | `Vec<bytes>` | |
-| `0x36` | ZCARD | `key: bytes` | `count: u64` | |
+Get one field from a hash key.
 
----
-
-### Counter Commands (0x40 – 0x45)
-
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x40` | INCR | `key: bytes` | `value: i64` | Atomically increment by 1; creates key at 0 if absent |
-| `0x41` | INCRBY | `IncrByRequest{key, delta: i64}` | `value: i64` | |
-| `0x42` | DECR | `key: bytes` | `value: i64` | |
-| `0x43` | DECRBY | `DecrByRequest{key, delta: i64}` | `value: i64` | |
-| `0x44` | GETSET | `GetSetRequest{key, value: bytes}` | `old_value: bytes \| null` | Atomic swap |
-| `0x45` | SETNX | `SetNxRequest{key, value: bytes, ttl_ms: Option<u64>}` | `set: bool` | Set only if key absent |
-
----
-
-### JSON Commands (0x50 – 0x56)
-
-JSON values are stored as opaque bytes internally. Path selectors use JSONPath syntax.
-
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x50` | JSON.SET | `JsonSetRequest{key, path: String, value: bytes}` | `"OK"` | |
-| `0x51` | JSON.GET | `JsonGetRequest{key, paths: Vec<String>}` | `bytes` | |
-| `0x52` | JSON.DEL | `JsonDelRequest{key, path: String}` | `deleted: u64` | |
-| `0x53` | JSON.ARRAPPEND | `JsonArrAppendRequest{key, path: String, values: Vec<bytes>}` | `length: u64` | |
-| `0x54` | JSON.NUMINCRBY | `JsonNumIncrRequest{key, path: String, delta: f64}` | `value: f64` | |
-| `0x55` | JSON.TYPE | `JsonTypeRequest{key, path: String}` | `type_name: String` | "string", "number", "object", "array", "boolean", "null" |
-| `0x56` | JSON.MGET | `JsonMGetRequest{keys: Vec<bytes>, path: String}` | `Vec<bytes \| null>` | Bulk get same path from multiple keys |
-
----
-
-### Auth Commands (0x60 – 0x61)
-
-Auth commands must be sent before any other command on a new connection when authentication is enabled.
-
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x60` | AUTH | `token: String` OR `(username: String, password: String)` | `"OK"` (token auth) or `token: String` (credential auth) | Credential auth returns a fresh session token |
-| `0x61` | REVOKE_TOKEN | `token: String` | `"OK"` | Admin-only. Immediately invalidates the token. |
-
-**Token auth flow:** Pass a previously issued token string. Argus validates the HMAC-SHA256 signature against `cluster_secret` and checks the revocation list. Validation is ~75ns.
-
-**Credential auth flow:** Pass username and password. Argus checks PBKDF2 hash in `users.db`. On success, a new token is issued and returned. Store this token; do not store the password.
-
----
-
-### Admin Commands (0x80 – 0x85)
-
-Admin commands require a token with `is_admin = true`.
-
-| Hex  | Command | Request Payload | Response Payload | Notes |
-|------|---------|-----------------|------------------|-------|
-| `0x80` | CONFIG | `ConfigRequest{action: "GET"\|"SET", key: String, value: Option<String>}` | `value: String` or `"OK"` | Live config: `memory.pool_bytes`, `lethe.eviction_threshold`, etc. |
-| `0x81` | CLUSTER_INFO | `(empty)` | `ClusterInfo` struct | Cluster term, leader, live node count, pool sizes |
-| `0x82` | CLUSTER_SLOTS | `(empty)` | `Vec<SlotRange{start, end, keeper_id, addr}>` | Current Iris slot assignment |
-| `0x83` | KEEPER_LIST | `(empty)` | `Vec<KeeperInfo{id, addr, grant, state, connected, lag_ms}>` | |
-| `0x84` | POOL_STATS | `(empty)` | `PoolStats{used, max, pressure_ratio, in_flight, keeper_stats}` | |
-| `0x85` | WAIT | `WaitRequest{numreplicas: u64, timeout_ms: u64}` | `acked: u64` | Block until N Keepers ACK last write or timeout |
-
----
-
-### Internal / Replication Commands (0xA0 – 0xA6)
-
-These commands are used exclusively on the replication port (7379) between God and Keepers. Clients must not send these; a `ProtocolViolation` error will be returned if they appear on the client port.
-
-| Hex  | Command | Direction | Description |
-|------|---------|-----------|-------------|
-| `0xA0` | SYNC_START | Keeper → God | Initiate sync session after Keeper restart or first join |
-| `0xA1` | PUSH_KEY | God → Keeper | Replicate a single key-value pair with TTL |
-| `0xA2` | HEARTBEAT | God ↔ Keeper | Bidirectional keepalive; carries lag measurement |
-| `0xA3` | MOVED | God → Client | Redirect client to correct node for a slot |
-| `0xA4` | ACK_WRITE | Keeper → God | Acknowledge a replicated write for QUORUM/ALL counting |
-| `0xA5` | SYNC_REQUEST | Keeper → God | Request delta sync from a given LSN |
-| `0xA6` | SYNC_COMPLETE | Keeper → God | Signal that warm-up is done; carries `key_count: u64` |
-
-**PUSH_KEY payload:**
-
+**Request**
 ```rust
-struct PushKey {
-    key:       bytes,
-    value:     bytes,
-    expiry_at: u64,   // unix ms; 0 = no expiry
-    slot:      u16,
-}
+struct HGetRequest { key: bytes, field: bytes }
 ```
 
-TTL is replicated as an absolute `expiry_at` timestamp so that keys expired during Keeper downtime are deleted immediately on push rather than serving stale data.
+**Response** — `bytes` (raw field value) or `Error(KeyNotFound)`.
 
-**SYNC_COMPLETE payload:**
+---
 
+### HDEL — 0x12
+
+Delete one or more fields from a hash key.
+
+**Request**
 ```rust
-struct SyncComplete {
-    keeper_id: u32,
-    key_count: u64,   // total keys pushed; God uses this to detect sync completion
+struct HDelRequest { key: bytes, fields: Vec<bytes> }
+```
+
+**Response** — `u64` count of fields removed.
+
+---
+
+### HGETALL — 0x13
+
+Return all fields and values in a hash key.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `Vec<(field: bytes, value: bytes)>`. Returns empty vec if key absent.
+
+---
+
+## List Commands
+
+### LPUSH — 0x20
+
+Prepend values to the head of a list.
+
+**Request**
+```rust
+struct ListPushRequest { key: bytes, values: Vec<bytes> }
+```
+
+**Response** — `u64` new list length.
+
+---
+
+### RPUSH — 0x21
+
+Append values to the tail of a list.
+
+**Request** — same as `LPUSH`
+
+**Response** — `u64` new list length.
+
+---
+
+### LPOP — 0x22
+
+Remove and return the first element of a list.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `Value` or `Error(KeyNotFound)`.
+
+---
+
+### RPOP — 0x23
+
+Remove and return the last element.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `Value` or `Error(KeyNotFound)`.
+
+---
+
+### LRANGE — 0x24
+
+Return a slice of the list.
+
+**Request**
+```rust
+struct LRangeRequest { key: bytes, start: i64, stop: i64 }
+```
+
+**Response** — `Vec<Value>`. Negative indexes count from the tail (−1 = last element).
+
+---
+
+## Sorted Set Commands
+
+`ZSetMember` = `{ member: bytes, score: f64 }`
+
+### ZADD — 0x30
+
+Add or update members.
+
+**Request**
+```rust
+struct ZAddRequest { key: bytes, members: Vec<ZSetMember> }
+```
+
+**Response** — `u64` count of newly added members (updates not counted).
+
+---
+
+### ZRANK — 0x31
+
+Return the 0-based rank of a member (ascending order).
+
+**Request**
+```rust
+struct ZRankRequest { key: bytes, member: bytes }
+```
+
+**Response** — `u64` rank or `Error(KeyNotFound)`.
+
+---
+
+### ZRANGE — 0x32
+
+Return members by rank range.
+
+**Request**
+```rust
+struct ZRangeRequest { key: bytes, start: i64, stop: i64, with_scores: bool }
+```
+
+**Response** — `Vec<ZSetMember>`. When `with_scores=false`, `score` fields are 0.0.
+
+---
+
+### ZRANGEBYSCORE — 0x33
+
+Return members in a score range [min, max].
+
+**Request**
+```rust
+struct ZRangeByScoreRequest { key: bytes, min: f64, max: f64 }
+```
+
+**Response** — `Vec<ZSetMember>` in ascending score order.
+
+---
+
+### ZCARD — 0x34
+
+Return the number of members.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `u64`
+
+---
+
+### ZREM — 0x35
+
+Remove one or more members.
+
+**Request**
+```rust
+struct ZRemRequest { key: bytes, members: Vec<bytes> }
+```
+
+**Response** — `u64` count removed.
+
+---
+
+### ZSCORE — 0x36
+
+Return the score of a member.
+
+**Request**
+```rust
+struct ZRankRequest { key: bytes, member: bytes }
+```
+
+**Response** — `f64` score or `Error(KeyNotFound)`.
+
+---
+
+## Counter Commands
+
+Counter commands operate on `Value::Counter(i64)` keys. Using them on a key
+that holds another type returns `WrongType`. A missing key is initialised to 0
+before the operation.
+
+### INCR — 0x40
+
+Increment by 1.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `i64` new value.
+
+---
+
+### DECR — 0x41
+
+Decrement by 1.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `i64`
+
+---
+
+### INCRBY — 0x42
+
+Increment by a signed delta.
+
+**Request**
+```rust
+struct IncrByRequest { key: bytes, delta: i64 }
+```
+
+**Response** — `i64`
+
+---
+
+### DECRBY — 0x43
+
+Decrement by `delta`.
+
+**Request** — same as `IncrByRequest`
+
+**Response** — `i64`
+
+---
+
+### INCRBYFLOAT — 0x44
+
+Increment by a floating-point delta. Operates on `Counter` keys; result is
+stored back as `Counter` with the float value truncated if needed.
+
+**Request**
+```rust
+struct IncrByFloatRequest { key: bytes, delta: f64 }
+```
+
+**Response** — `f64`
+
+---
+
+### GETSET — 0x45
+
+Atomically swap a value, returning the old value.
+
+**Request**
+```rust
+struct GetSetRequest { key: bytes, value: Value }
+```
+
+**Response** — `Value` (old value) or `Error(KeyNotFound)` if key was absent.
+
+---
+
+## JSON Commands
+
+JSON values are stored internally as UTF-8 strings. Path selectors use
+**JSONPath** syntax: `$` = root, `$.field`, `$.nested.field`, `$.arr[0]`.
+
+### JSON.GET — 0x50
+
+Fetch a value at a path.
+
+**Request**
+```rust
+struct JsonGetRequest { key: bytes, path: String }
+```
+
+**Response** — JSON string or `Error(KeyNotFound)`.
+
+---
+
+### JSON.SET — 0x51
+
+Set a value at a path.
+
+**Request**
+```rust
+struct JsonSetRequest { key: bytes, path: String, value: String }
+```
+
+**Response** — `"OK"`.
+
+Set `path = "$"` to replace the entire document.
+
+---
+
+### JSON.DEL — 0x52
+
+Delete a node at a path.
+
+**Request**
+```rust
+struct JsonDelRequest { key: bytes, path: String }
+```
+
+**Response** — `u64` count of nodes deleted (0 if path does not exist).
+
+---
+
+### JSON.EXISTS — 0x53
+
+Check whether a path exists in a JSON document.
+
+**Request**
+```rust
+struct JsonGetRequest { key: bytes, path: String }
+```
+
+**Response** — `bool`
+
+---
+
+### JSON.TYPE — 0x54
+
+Return the JSON type of the value at a path.
+
+**Request**
+```rust
+struct JsonGetRequest { key: bytes, path: String }
+```
+
+**Response** — `string`: `"object"`, `"array"`, `"string"`, `"number"`, `"boolean"`, `"null"`.
+
+---
+
+### JSON.ARRAPPEND — 0x55
+
+Append a JSON-encoded value to an array at a path.
+
+**Request**
+```rust
+struct JsonArrAppendRequest { key: bytes, path: String, value: String }
+```
+
+**Response** — `u64` new array length.
+
+---
+
+### JSON.NUMINCRBY — 0x56
+
+Increment a numeric value at a path.
+
+**Request**
+```rust
+struct JsonNumIncrByRequest { key: bytes, path: String, delta: f64 }
+```
+
+**Response** — `f64` new value.
+
+---
+
+## Authentication Commands
+
+### AUTH — 0x60
+
+Authenticate the current connection with a session token.
+
+**Request** — `string` (HMAC-SHA256 session token)
+
+**Response** — `"OK"` on success, `Error(TokenInvalid | TokenExpired | TokenRevoked)` on failure.
+
+Must be the **first command** on every new connection.
+Validation time: ~75 ns (HMAC verify + JTI blocklist lookup).
+
+---
+
+### REVOKE_TOKEN — 0x61
+
+Immediately invalidate the current session token.
+
+**Request** — `()` (unit / nil payload)
+
+**Response** — `"OK"`.
+
+Inserts the token's JTI into the in-memory blocklist. Subsequent AUTH attempts
+with the same token return `TokenRevoked`.
+
+---
+
+## User Management Commands (admin role required)
+
+### USER_CREATE — 0x62
+
+Create a new user.
+
+**Request**
+```rust
+struct UserCreateRequest {
+    username: String,
+    password: String,
+    role:     String,   // "admin" | "readwrite" | "readonly"
 }
 ```
 
----
-
-## Response Envelope
-
-Every response carries a one-byte response code prefix followed by the msgpack payload.
-
-| Code | Value | Meaning |
-|------|-------|---------|
-| `0xF0` | OK | Command succeeded; payload follows |
-| `0xF1` | Error | Command failed; payload is `MnemeError` (see below) |
-
-The `req_id` in the response header matches the `req_id` of the originating request. The `cmd_id` in the response echoes the request command.
+**Response** — `string` (newly issued session token for the new user).
 
 ---
 
-## Error Codes
+### USER_DELETE — 0x63
 
-All errors are returned as msgpack-encoded `MnemeError` variants with `0xF1` response code. Errors never cause a panic; the connection remains open and can accept further requests.
+Delete a user.
 
-| Error Variant | Description |
-|---|---|
-| `KeyNotFound` | The requested key does not exist or has expired |
-| `WrongType` | Operation not valid for the key's type (e.g., HGET on a String key) |
-| `TokenExpired` | Session token has passed its TTL |
-| `TokenInvalid` | Token HMAC signature verification failed |
-| `TokenRevoked` | Token has been explicitly revoked via REVOKE_TOKEN |
-| `MaxConnectionsReached` | `max_total` (100,000) or `max_per_ip` (1,000) limit hit; connection rejected before TLS |
-| `RequestTimeout` | Request exceeded `request_timeout` (5,000ms) deadline |
-| `SlotMoved { slot, addr }` | Key's slot has migrated; retry the request at the given address |
-| `QuorumNotReached { got, need }` | Fewer Keepers ACKed than required; write not committed |
-| `OutOfMemory` | Logical pool is full; Lethe eviction could not free sufficient space |
-| `KeeperUnreachable` | Hermes could not deliver a frame to one or more required Keepers |
-| `WalWriteFailed` | Aoide failed to write or fsync the WAL segment |
-| `SnapshotFailed` | Melete snapshot write failed (e.g., disk full) |
-| `ProtocolViolation` | Malformed header, wrong magic, or internal command on client port |
-| `UnknownCommand` | `cmd_id` not recognized |
-| `PayloadTooLarge` | Payload exceeds a size limit (see Payload Limits) |
+**Request**
+```rust
+struct UserDeleteRequest { username: String }
+```
 
-### SlotMoved handling
+**Response** — `"OK"`.
 
-When a client receives `SlotMoved { slot, addr }`, it must:
+---
 
-1. Update its local slot map for the affected slot.
-2. Retry the exact same request at the returned `addr`.
-3. Not retry more than once for the same request; if the second attempt also returns `SlotMoved`, there is a cluster reconfiguration in progress — back off and retry with exponential delay.
+### USER_LIST — 0x64
 
-The Pontus client library handles this automatically.
+List all registered usernames.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<string>` (usernames).
+
+---
+
+### USER_GRANT — 0x65
+
+Grant a user access to a database by numeric ID.
+
+**Request**
+```rust
+struct UserGrantRequest { username: String, db_id: u16 }
+```
+
+**Response** — `"OK"`.
+
+A user with an empty `allowed_dbs` list has access to all databases.
+
+---
+
+### USER_REVOKE — 0x66
+
+Revoke a user's access to a specific database.
+
+**Request**
+```rust
+struct UserRevokeRequest { username: String, db_id: u16 }
+```
+
+**Response** — `"OK"`.
+
+---
+
+### USER_INFO — 0x67
+
+Return information about a user.
+
+**Request**
+```rust
+struct UserInfoRequest { username: Option<String> }   // None = calling user
+```
+
+**Response** — `(username: String, role: String, allowed_dbs: Vec<u16>)`.
+
+---
+
+### USER_SETROLE — 0x68
+
+Change a user's role.
+
+**Request**
+```rust
+struct UserSetRoleRequest { username: String, role: String }
+```
+
+**Response** — `"OK"`.
+
+Valid roles: `"admin"`, `"readwrite"`, `"readonly"`.
+
+---
+
+## Observability Commands
+
+### SLOWLOG — 0x70
+
+Return the most recent slow commands.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<(command: String, key: bytes, duration_us: u64)>` sorted descending by duration.
+
+The server retains the last 128 entries (configurable).
+
+---
+
+### METRICS — 0x71
+
+Return a Prometheus metrics summary.
+
+**Request** — `()` (unit)
+
+**Response** — `(epoch_ms: u64, total_requests: u64)`.
+
+For the full Prometheus scrape endpoint, use HTTP `GET :9090/metrics`.
+
+---
+
+### STATS — 0x72
+
+Return a human-readable INFO-style server statistics block.
+
+**Request** — `()` (unit)
+
+**Response** — `string` (multi-line text, one `key: value` per line).
+
+Fields include: `version`, `uptime_s`, `connected_clients`, `pool_bytes_used`,
+`pool_bytes_max`, `memory_pressure`, `evictions_lfu`, `evictions_oom`,
+`replication_keeper_count`, `raft_term`, `is_leader`, `warmup_state`.
+
+---
+
+### MEMORY_USAGE — 0x73
+
+Estimate the memory footprint of a single key.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `u64` approximate bytes. `0` if key does not exist.
+
+---
+
+### MONITOR — 0x74
+
+Subscribe to the real-time command stream.
+
+**Request** — `()` (unit)
+
+**Initial response** — `"OK"` ACK.
+
+After the ACK, the server continuously pushes frames with `req_id=0` and
+`cmd_id=Ok` for every command executed. Each payload is a msgpack string:
+
+```
+"<timestamp_ms> <cmd_name> <key_hex>"
+```
+
+Use a dedicated connection for monitoring. Stop by closing the connection.
+
+---
+
+## Admin / Config Commands
+
+### CONFIG — 0x80
+
+Set a live configuration parameter.
+
+**Request**
+```rust
+struct ConfigSetRequest { param: String, value: String }
+```
+
+**Response** — `"OK"`.
+
+Hot-reloadable parameters: `memory.pool_bytes`, `memory.eviction_threshold`.
+Parameters requiring restart return an error.
+
+---
+
+### CLUSTER_INFO — 0x81
+
+Return a key-value summary of cluster state.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<(key: String, value: String)>`.
+
+Fields: `raft_term`, `is_leader`, `leader_id`, `leader_addr`, `warmup_state`,
+`supported_modes`, `memory_pressure`, `keeper_count`, `uptime_s`.
+
+---
+
+### CLUSTER_SLOTS — 0x82
+
+Return the slot-to-node assignment table.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<(start: u16, end: u16, addr: String)>`.
+
+Each tuple represents a contiguous slot range [start, end] (inclusive) owned
+by the Core node at `addr`. In a single-Core deployment there is one entry
+covering all 16 384 slots.
+
+---
+
+### KEEPER_LIST — 0x83
+
+Return one entry per connected Keeper node.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<(node_id: u64, name: String, addr: String, pool_bytes: u64, used_bytes: u64)>`.
+
+---
+
+### POOL_STATS — 0x84
+
+Return aggregate memory pool statistics.
+
+**Request** — `()` (unit)
+
+**Response** — `(used_bytes: u64, total_bytes: u64, keeper_count: usize)`.
+
+`total_bytes` is the sum of Core RAM pool + all Keeper cold-store grants.
+
+---
+
+### WAIT — 0x85
+
+Block until Keepers acknowledge all pending writes.
+
+**Request**
+```rust
+struct WaitRequest { n_keepers: usize, timeout_ms: u64 }
+```
+
+**Response** — `u64` count of Keepers that ACKed within the timeout.
+
+Returns immediately if there are no pending writes. Use this to ensure
+durability before reading from a replica or signalling to a caller that a
+write is safe.
+
+---
+
+## Database Namespace Commands
+
+MnemeCache supports up to 65 536 logical databases (default 16). Database 0
+is the default; all connections start on database 0. Named databases map a
+human-readable name to a numeric ID.
+
+### SELECT — 0x86
+
+Switch the active database for the current connection.
+
+**Request**
+```rust
+struct SelectRequest { db_id: u16, name: String }
+```
+
+Supply either `db_id` or `name` (non-empty `name` takes priority).
+
+**Response** — `"OK"`.
+
+---
+
+### DBSIZE — 0x87
+
+Count live (non-expired) keys in a database.
+
+**Request**
+```rust
+struct DbSizeRequest { db_id: Option<u16>, name: String }
+```
+
+`None` db_id and empty name → use connection's active database.
+
+**Response** — `u64`
+
+---
+
+### FLUSHDB — 0x88
+
+Delete all keys in a database.
+
+**Request**
+```rust
+struct FlushDbRequest { db_id: Option<u16>, name: String, sync: bool }
+```
+
+`sync=true` (default) replicates delete tombstones to Keepers.
+
+**Response** — `"OK"`.
+
+---
+
+### SCAN — 0x89
+
+Cursor-based iteration over keys.
+
+**Request**
+```rust
+struct ScanRequest {
+    cursor:  u64,            // 0 = begin new scan
+    pattern: Option<String>, // glob: "prefix*", "*suffix", "*sub*", exact
+    count:   u64,            // hint; default 10, max 1 000
+}
+```
+
+**Response** — `(next_cursor: u64, keys: Vec<bytes>)`.
+`next_cursor=0` signals scan completion.
+
+---
+
+### TYPE — 0x8A
+
+Return the type string of a key's value.
+
+**Request** — `bytes` (raw key)
+
+**Response** — `string`: `"string"`, `"hash"`, `"list"`, `"zset"`, `"counter"`, `"json"`.
+Returns `Error(KeyNotFound)` if key absent.
+
+---
+
+### MGET — 0x8B
+
+Bulk fetch up to 1 000 keys.
+
+**Request**
+```rust
+struct MGetRequest { keys: Vec<bytes> }
+```
+
+**Response** — `Vec<Option<Value>>`. Each element is `Some(value)` or `None` if not found.
+
+---
+
+### MSET — 0x8C
+
+Bulk set up to 1 000 key-value pairs.
+
+**Request**
+```rust
+struct MSetRequest { pairs: Vec<(key: bytes, value: Value, ttl_ms: u64)> }
+```
+
+`ttl_ms=0` = no expiry.
+
+**Response** — `"OK"`.
+
+---
+
+### DB_CREATE — 0x8D
+
+Register a named database.
+
+**Request**
+```rust
+struct DbCreateRequest { name: String, db_id: Option<u16> }
+```
+
+`db_id=None` → server assigns the next available ID.
+
+**Response** — `u16` (assigned database ID).
+
+---
+
+### GEN_JOIN_TOKEN — 0x8E
+
+Generate a one-time Keeper join token.
+
+**Request** — `()` (unit) — admin role required.
+
+**Response** — `string` (token). Valid for `auth.join_token_ttl_s` seconds (default 300).
+
+Pass this token to `mneme-keeper --join-token <TOKEN>` when adding a new node.
+
+---
+
+### DB_LIST — 0x8F
+
+List all registered named databases.
+
+**Request** — `()` (unit)
+
+**Response** — `Vec<(name: String, id: u16)>`.
+
+---
+
+### DB_DROP — 0x90
+
+Unregister a named database. **Does not delete data** — keys remain stored
+under the numeric ID and are still accessible by ID.
+
+**Request**
+```rust
+struct DbDropRequest { name: String }
+```
+
+**Response** — `"OK"`.
+
+---
+
+## Response Frames
+
+| CmdId           | Hex  | Payload |
+|-----------------|------|---------|
+| OK              | 0xF0 | Command-specific result (see above) |
+| ERROR           | 0xF1 | `string` — error name and optional detail |
+| LEADER_REDIRECT | 0xB3 | `{ leader_addr: String }` |
+
+---
+
+## Error Reference
+
+| Error | When |
+|-------|------|
+| `KeyNotFound` | Key absent or expired |
+| `WrongType` | Operation type mismatch (e.g. HGET on a Counter key) |
+| `TokenExpired` | Session token TTL elapsed |
+| `TokenInvalid` | HMAC signature mismatch |
+| `TokenRevoked` | Token in JTI blocklist |
+| `MaxConnectionsReached` | Server at `charon.max_total` (100 000) or `max_per_ip` (1 000) |
+| `RequestTimeout` | Exceeded 5 000 ms per-request deadline |
+| `SlotMoved { slot, addr }` | Slot migrated — retry at `addr` |
+| `QuorumNotReached { got, need }` | Insufficient Keeper ACKs |
+| `OutOfMemory` | RAM pool full, eviction failed |
+| `KeeperUnreachable` | Required Keeper offline |
+| `WalWriteFailed` | Aoide WAL write / fsync failure |
+| `SnapshotFailed` | Melete snapshot write failure |
+| `ProtocolViolation` | Bad frame header or internal command on client port |
+| `UnknownCommand` | Unrecognised CmdId |
+| `PayloadTooLarge` | Key > 512 B, value > 10 MB, or batch > 1 000 keys |
 
 ---
 
 ## Payload Limits
 
-These limits are enforced at the Charon connection layer, before the request reaches Mnemosyne. Requests that exceed any limit receive `PayloadTooLarge` immediately.
-
-| Parameter | Limit |
-|---|---|
+| Limit | Default |
+|-------|---------|
 | Max key size | 512 bytes |
-| Max value size | 10 MiB (10,485,760 bytes) |
-| Max hash fields per key | 65,536 |
-| Max keys per batch request (DEL, JSON.MGET, etc.) | 1,000 |
-| Max header `payload_len` | 10,485,760 (enforced before read) |
-
-Keys exceeding 512 bytes are rejected regardless of the value size. The `payload_len` field in the header is checked before the payload is read from the socket; an oversized frame does not consume memory.
+| Max value size | 10 MB |
+| Max hash field count | 65 536 |
+| Max batch keys (MGET / MSET / DEL) | 1 000 |
 
 ---
 
-## Connection Lifecycle
+## Internal / Replication Commands
 
-```
-Client                           Charon (God)
-  |                                  |
-  |-- TCP SYN ---------------------->|  (rejected here if max_total reached)
-  |<- TCP SYN-ACK ------------------|
-  |-- TLS ClientHello -------------->|
-  |<- TLS ServerHello + cert --------|  (TLS 1.3, rustls, cert from Aegis)
-  |-- [TLS established] ------------>|
-  |-- AUTH (0x60, req_id=1) -------->|
-  |<- 0xF0 OK / token (req_id=1) ---|
-  |                                  |
-  |-- GET  (0x01, req_id=2) -------->|  ← multiplexed requests start here
-  |-- SET  (0x02, req_id=3) -------->|
-  |<- 0xF0 value   (req_id=3) ------|  ← responses may arrive out of order
-  |<- 0xF0 "OK"    (req_id=2) ------|
-  |                                  |
-  |-- [idle > 30s] ------------------|  (Charon closes with idle_timeout)
-```
+These command IDs appear only on the mTLS replication port (7379).
+Sending them on the client port (6379) returns `ProtocolViolation`.
 
-TCP keepalive is set to 10 seconds (`tcp_keepalive_s`) to detect half-open connections. Idle connections without traffic are closed after 30 seconds (`idle_timeout_s`).
+| CmdId         | Hex  | Direction | Description |
+|---------------|------|-----------|-------------|
+| SYNC_START    | 0xA0 | Keeper→Core | Begin sync session; carries `SyncStartPayload` |
+| PUSH_KEY      | 0xA1 | Core→Keeper | Replicate one key-value pair with TTL |
+| HEARTBEAT     | 0xA2 | Core↔Keeper | Keepalive + Keeper stats |
+| MOVED         | 0xA3 | Core→Client | Slot migration redirect |
+| ACK_WRITE     | 0xA4 | Keeper→Core | Acknowledge a replicated write |
+| SYNC_REQUEST  | 0xA5 | Keeper→Core | Request delta replay from a sequence number |
+| SYNC_COMPLETE | 0xA6 | Keeper→Core | Warmup complete; carries pushed key count |
+
+### Raft Commands (Core-to-Core, mTLS port)
+
+| CmdId                | Hex  |
+|----------------------|------|
+| RAFT_APPEND_ENTRIES  | 0xB0 |
+| RAFT_VOTE            | 0xB1 |
+| RAFT_INSTALL_SNAPSHOT| 0xB2 |
+| LEADER_REDIRECT      | 0xB3 |
+
+`LEADER_REDIRECT (0xB3)` is both a Raft-layer frame and a client-facing
+response. When sent to a client it carries `{ leader_addr: String }`.

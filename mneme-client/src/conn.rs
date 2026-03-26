@@ -11,18 +11,21 @@ use bytes::BytesMut;
 use dashmap::DashMap;
 use mneme_common::{CmdId, Frame, HEADER_LEN};
 pub use mneme_common::ConsistencyLevel as Consistency;
+use parking_lot::Mutex as ParkingMutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{oneshot, Mutex as TokioMutex};
+use tokio::sync::{oneshot, Mutex as TokioMutex, mpsc};
 use tokio_rustls::client::TlsStream;
 
 // ── Core struct ────────────────────────────────────────────────────────────────
 
 pub struct MnemeConn {
     /// Pending request map: req_id → response sender.
-    pub(crate) pending: Arc<DashMap<u32, oneshot::Sender<Frame>>>,
-    pub(crate) req_id:  Arc<AtomicU32>,
-    pub(crate) writer:  Arc<TokioMutex<tokio::io::WriteHalf<TlsStream<TcpStream>>>>,
+    pub(crate) pending:    Arc<DashMap<u32, oneshot::Sender<Frame>>>,
+    pub(crate) req_id:     Arc<AtomicU32>,
+    pub(crate) writer:     Arc<TokioMutex<tokio::io::WriteHalf<TlsStream<TcpStream>>>>,
+    /// Active MONITOR subscription sender. Set by `monitor()`, cleared on drop.
+    pub(crate) monitor_tx: Arc<ParkingMutex<Option<mpsc::Sender<String>>>>,
 }
 
 impl MnemeConn {
@@ -30,12 +33,15 @@ impl MnemeConn {
     pub fn new(stream: TlsStream<TcpStream>) -> Self {
         let (reader, writer) = tokio::io::split(stream);
         let pending: Arc<DashMap<u32, oneshot::Sender<Frame>>> = Arc::new(DashMap::new());
-        let pending2 = pending.clone();
-        tokio::spawn(recv_loop(reader, pending2));
+        let pending2    = pending.clone();
+        let monitor_tx  = Arc::new(ParkingMutex::new(None::<mpsc::Sender<String>>));
+        let monitor_tx2 = monitor_tx.clone();
+        tokio::spawn(recv_loop(reader, pending2, monitor_tx2));
         Self {
             pending,
             req_id: Arc::new(AtomicU32::new(1)),
             writer: Arc::new(TokioMutex::new(writer)),
+            monitor_tx,
         }
     }
 
@@ -129,7 +135,8 @@ pub(crate) fn consistency_flags(c: Consistency) -> u16 {
 
 async fn recv_loop(
     mut reader: tokio::io::ReadHalf<TlsStream<TcpStream>>,
-    pending: Arc<DashMap<u32, oneshot::Sender<Frame>>>,
+    pending:    Arc<DashMap<u32, oneshot::Sender<Frame>>>,
+    monitor_tx: Arc<ParkingMutex<Option<mpsc::Sender<String>>>>,
 ) {
     let mut buf = BytesMut::with_capacity(4096);
     loop {
@@ -141,13 +148,11 @@ async fn recv_loop(
             match reader.read_buf(&mut buf).await {
                 Ok(0) | Err(_) => {
                     // Connection closed — wake all pending waiters.
-                    let senders: Vec<_> = pending
-                        .iter().map(|e| *e.key()).collect::<Vec<_>>()
-                        .into_iter()
-                        .filter_map(|id| pending.remove(&id).map(|(_, tx)| tx))
-                        .collect();
-                    for tx in senders {
-                        let _ = tx.send(Frame::error_response("connection closed"));
+                    let keys: Vec<u32> = pending.iter().map(|e| *e.key()).collect();
+                    for id in keys {
+                        if let Some((_, tx)) = pending.remove(&id) {
+                            let _ = tx.send(Frame::error_response("connection closed"));
+                        }
                     }
                     return;
                 }
@@ -159,6 +164,16 @@ async fn recv_loop(
             Err(_) => return,
         };
         let _ = buf.split_to(consumed);
+
+        // req_id=0 with cmd_id=Ok/Monitor → server-push (MONITOR stream event)
+        if frame.req_id == 0 && matches!(frame.cmd_id, CmdId::Ok | CmdId::Monitor) {
+            let msg: String = rmp_serde::from_slice(&frame.payload).unwrap_or_default();
+            if let Some(tx) = monitor_tx.lock().as_ref() {
+                let _ = tx.try_send(msg);
+            }
+            continue;
+        }
+
         if let Some((_, tx)) = pending.remove(&frame.req_id) {
             let _ = tx.send(frame);
         }
