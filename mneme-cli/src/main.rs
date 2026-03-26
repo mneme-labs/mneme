@@ -1342,6 +1342,34 @@ SECURITY:\n\
   Requires admin role."
     )]
     JoinToken,
+
+    #[command(
+        about = "Pipe mode: read commands from stdin over a single persistent connection.",
+        long_about = "PIPE — persistent-connection batch mode\n\
+\n\
+Reads one command per line from stdin and executes each over a single\n\
+TLS connection, skipping the per-invocation handshake cost (~40 ms on\n\
+Docker/Mac, ~5 ms on native Linux).  Output is written to stdout one\n\
+response per line.\n\
+\n\
+SUPPORTED COMMANDS (case-insensitive):\n\
+  GET <key>\n\
+  SET <key> <value> [TTL <secs>]\n\
+  DEL <key> [<key> ...]\n\
+  EXISTS <key>\n\
+  TTL <key>\n\
+  INCR <key>\n\
+  DECR <key>\n\
+  PING\n\
+\n\
+Lines beginning with # are treated as comments.\n\
+\n\
+EXAMPLES:\n\
+  printf 'SET otp 123456 TTL 60\\nGET otp\\n' | mneme-cli -u admin -p s pipe\n\
+  cat cmds.txt | mneme-cli --token TOK pipe\n\
+  echo 'GET otp' | mneme-cli -t TOK pipe"
+    )]
+    Pipe,
 }
 
 // ── main ───────────────────────────────────────────────────────────────────────
@@ -1421,6 +1449,11 @@ async fn main() -> Result<()> {
 
     // Parse consistency
     let consistency_flags: u16 = parse_consistency(&eff.consistency);
+
+    // Pipe mode is handled specially — it loops over stdin and never calls run_command.
+    if matches!(cli.cmd, Command::Pipe) {
+        return run_pipe_mode(&mut conn, consistency_flags).await;
+    }
 
     // Execute command
     let result = run_command(&mut conn, &cli.cmd, consistency_flags, active_db).await?;
@@ -2366,6 +2399,9 @@ async fn run_command(conn: &mut Conn, cmd: &Command, cons_flags: u16, active_db:
             Ok(out)
         }
 
+        // Pipe is dispatched in main() before run_command; unreachable here.
+        Command::Pipe => Ok(String::new()),
+
         // Profile commands are handled before connect() in main(); these
         // branches are unreachable at runtime but required for match exhaustion.
         Command::ProfileSet { .. } | Command::ProfileList
@@ -2373,6 +2409,119 @@ async fn run_command(conn: &mut Conn, cmd: &Command, cons_flags: u16, active_db:
             Ok(String::new()) // unreachable
         }
     }
+}
+
+// ── pipe mode ─────────────────────────────────────────────────────────────────
+
+/// Read commands from stdin line by line and execute them over a single
+/// persistent TLS connection.  One response is printed per input line.
+/// This avoids the per-invocation TLS handshake overhead of `docker exec`.
+async fn run_pipe_mode(conn: &mut Conn, cons_flags: u16) -> Result<()> {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line.context("stdin read")?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Split into at most 4 whitespace-separated tokens.
+        let parts: Vec<&str> = trimmed.splitn(4, ' ').collect();
+        let cmd_word = parts[0].to_ascii_uppercase();
+        let out = match cmd_word.as_str() {
+            "PING" => {
+                send_raw(conn, CmdId::Stats, rmp_serde::to_vec(&())?, 0).await
+                    .map(|_| "PONG".to_string())
+            }
+            "GET" => {
+                if parts.len() < 2 { eprintln!("GET: missing key"); continue; }
+                let req = mneme_common::GetRequest { key: parts[1].as_bytes().to_vec() };
+                send_cmd(conn, CmdId::Get, &req, 0).await
+                    .map(|resp| {
+                        let v: Value = rmp_serde::from_slice(&resp.payload)
+                            .unwrap_or(Value::String(b"(nil)".to_vec()));
+                        format_value(&v)
+                    })
+            }
+            "SET" => {
+                if parts.len() < 3 { eprintln!("SET: missing key/value"); continue; }
+                // SET <key> <value> [TTL <secs>]
+                let after_key = trimmed.splitn(3, ' ').nth(2).unwrap_or("");
+                let (val_part, ttl_ms) = if let Some(idx) = after_key.to_ascii_uppercase().find(" TTL ") {
+                    let val = &after_key[..idx];
+                    let secs: u64 = after_key[idx + 5..].trim().parse().unwrap_or(0);
+                    (val, secs * 1000)
+                } else {
+                    (after_key, 0u64)
+                };
+                let req = mneme_common::SetRequest {
+                    key:    parts[1].as_bytes().to_vec(),
+                    value:  Value::String(val_part.as_bytes().to_vec()),
+                    ttl_ms,
+                };
+                send_cmd(conn, CmdId::Set, &req, cons_flags).await
+                    .map(|resp| {
+                        rmp_serde::from_slice::<String>(&resp.payload).unwrap_or_else(|_| "OK".into())
+                    })
+            }
+            "DEL" => {
+                if parts.len() < 2 { eprintln!("DEL: missing key"); continue; }
+                let req = mneme_common::DelRequest {
+                    keys: parts[1..].iter().map(|k| k.as_bytes().to_vec()).collect(),
+                };
+                send_cmd(conn, CmdId::Del, &req, cons_flags).await
+                    .map(|resp| {
+                        let n: u64 = rmp_serde::from_slice(&resp.payload).unwrap_or(0);
+                        format!("(integer) {n}")
+                    })
+            }
+            "EXISTS" => {
+                if parts.len() < 2 { eprintln!("EXISTS: missing key"); continue; }
+                let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+                send_raw(conn, CmdId::Exists, payload, 0).await
+                    .map(|resp| {
+                        let exists: bool = rmp_serde::from_slice(&resp.payload).unwrap_or(false);
+                        if exists { "(integer) 1".into() } else { "(integer) 0".into() }
+                    })
+            }
+            "TTL" => {
+                if parts.len() < 2 { eprintln!("TTL: missing key"); continue; }
+                let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+                send_raw(conn, CmdId::Ttl, payload, 0).await
+                    .map(|resp| {
+                        let secs: i64 = rmp_serde::from_slice(&resp.payload).unwrap_or(-2);
+                        format!("(integer) {secs}")
+                    })
+            }
+            "INCR" => {
+                if parts.len() < 2 { eprintln!("INCR: missing key"); continue; }
+                let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+                send_raw(conn, CmdId::Incr, payload, cons_flags).await
+                    .map(|resp| {
+                        let n: i64 = rmp_serde::from_slice(&resp.payload).unwrap_or(0);
+                        format!("(integer) {n}")
+                    })
+            }
+            "DECR" => {
+                if parts.len() < 2 { eprintln!("DECR: missing key"); continue; }
+                let payload = rmp_serde::to_vec(&parts[1].as_bytes().to_vec())?;
+                send_raw(conn, CmdId::Decr, payload, cons_flags).await
+                    .map(|resp| {
+                        let n: i64 = rmp_serde::from_slice(&resp.payload).unwrap_or(0);
+                        format!("(integer) {n}")
+                    })
+            }
+            other => {
+                eprintln!("pipe: unsupported command '{other}' — supported: GET SET DEL EXISTS TTL INCR DECR PING");
+                continue;
+            }
+        };
+        match out {
+            Ok(s)  => println!("{s}"),
+            Err(e) => println!("ERR {e}"),
+        }
+    }
+    Ok(())
 }
 
 // ── transport helpers ──────────────────────────────────────────────────────────

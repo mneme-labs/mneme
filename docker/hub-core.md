@@ -85,7 +85,7 @@ services:
       - "7379:7379"
       - "9090:9090"
     volumes:
-      - core-certs:/var/lib/mneme
+      - core-data:/var/lib/mneme
     restart: unless-stopped
 
   mneme-keeper-1:
@@ -119,7 +119,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  core-certs:
+  core-data:
   keeper1-data:
   keeper2-data:
 ```
@@ -158,6 +158,23 @@ volumes:
 | Read replicas | any + `core` (replica mode) | Read scale-out, analytics |
 
 See the [full docker-compose.yml](https://github.com/mneme-labs/mneme/blob/main/docker-compose.yml) for ready-to-use profiles.
+
+---
+
+## Performance
+
+| Operation | Consistency | p99 (native Linux) | p99 (Docker Desktop / macOS) |
+|-----------|------------|-------------------|------------------------------|
+| GET | EVENTUAL | < 150 µs | < 1.1 ms |
+| SET | QUORUM | < 800 µs | < 7 ms |
+| SET | EVENTUAL | < 300 µs | < 1.8 ms |
+
+`mneme-cli` does a full TLS handshake per invocation (~16ms on Docker Desktop). For bulk operations use **pipe mode** for a single reused TLS session:
+
+```bash
+printf 'SET k1 v1\nGET k1\nSET k2 v2\n' | \
+  docker exec -i mneme-core mneme-cli -u admin -p secret pipe
+```
 
 ---
 

@@ -1095,13 +1095,19 @@ dependencies = [
 name = "mneme-bench"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
+ "clap",
  "criterion",
+ "mneme-client",
  "mneme-common",
  "mneme-core",
  "parking_lot",
  "rmp-serde",
+ "rustls",
+ "rustls-pemfile",
  "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

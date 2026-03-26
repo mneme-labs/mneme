@@ -172,7 +172,7 @@ Add these services to the cluster compose above:
       MNEME_NODE_ID: replica-1
       MNEME_POOL_BYTES: 1gb
     ports:
-      - "6380:6379"
+      - "6380:6380"
     volumes:
       - replica1-data:/var/lib/mneme
     depends_on:
@@ -190,7 +190,7 @@ Add these services to the cluster compose above:
       MNEME_NODE_ID: replica-2
       MNEME_POOL_BYTES: 1gb
     ports:
-      - "6381:6379"
+      - "6381:6381"
     volumes:
       - replica2-data:/var/lib/mneme
     depends_on:
@@ -201,7 +201,7 @@ Add these services to the cluster compose above:
 Read from a replica:
 
 ```bash
-docker exec mneme-replica-1 mneme-cli -u admin -p secret \
+docker exec mneme-replica mneme-cli -u admin -p secret \
   --consistency EVENTUAL get mykey
 ```
 
@@ -240,12 +240,55 @@ Single Core + 3 Keepers + 2 read replicas + Prometheus + Grafana.
 ```bash
 MNEME_ADMIN_PASSWORD=secret docker compose --profile full up -d
 
-# Prometheus metrics
+# Core Prometheus metrics (direct)
 curl http://localhost:9090/metrics
+
+# Prometheus UI (aggregated)
+open http://localhost:9094
 
 # Grafana
 open http://localhost:3000   # admin / admin
 ```
+
+---
+
+## Benchmarking latency
+
+Use `mneme-bench` for persistent-connection latency benchmarks. Unlike `mneme-cli` (new TLS handshake per invocation), `mneme-bench` holds one connection and measures actual cache round-trip time.
+
+```bash
+# Build and run against a running cluster
+cargo build --release -p mneme-bench
+
+./target/release/mneme-bench \
+  --host 127.0.0.1:6379 \
+  --ca-cert /path/to/ca.crt \
+  --username admin \
+  --password secret \
+  --ops 10000
+
+# Example results (Docker Desktop / macOS → container):
+#   GET EVENTUAL  p50=217µs  p99=1033µs  p99.9=3.1ms
+#   SET QUORUM    p50=2.4ms  p99=7.1ms   (includes VM network overhead)
+#   SET EVENTUAL  p50=312µs  p99=1.8ms
+#
+# On native Linux:
+#   GET EVENTUAL  p99 < 150µs
+#   SET QUORUM    p99 < 800µs
+```
+
+### CLI pipe mode (minimal overhead)
+
+For scripted bulk operations, use `mneme-cli pipe` — a single TLS session reads commands from stdin:
+
+```bash
+printf 'SET foo bar\nGET foo\nSET counter 0\n' | \
+  docker exec -i mneme-core mneme-cli -u admin -p secret pipe
+# bar
+# 0
+```
+
+Pipe mode is ~12x faster than per-command invocations (1.3ms/op vs 16ms/invocation on Docker Desktop).
 
 ---
 

@@ -201,6 +201,7 @@ services:
     environment:
       <<: *common-env
       MNEME_CORE_ADDR:  mneme-core:7379
+      MNEME_NODE_ID:    mneme-replica-0
       MNEME_CONFIG:     /etc/mneme/replica.toml
     depends_on:
       mneme-core:
@@ -227,6 +228,7 @@ services:
     environment:
       <<: *common-env
       MNEME_CORE_ADDR:  mneme-core:7379
+      MNEME_NODE_ID:    mneme-replica-1
       MNEME_CONFIG:     /etc/mneme/replica-2.toml
     depends_on:
       mneme-core:
@@ -386,6 +388,7 @@ services:
     environment:
       <<: *common-env
       MNEME_CORE_ADDR:  mneme-core-1:7379
+      MNEME_NODE_ID:    replica-ha-1
       MNEME_CONFIG:     /etc/mneme/replica-ha-1.toml
     depends_on:
       mneme-core-1:
@@ -412,6 +415,7 @@ services:
     environment:
       <<: *common-env
       MNEME_CORE_ADDR:  mneme-core-1:7379
+      MNEME_NODE_ID:    replica-ha-2
       MNEME_CONFIG:     /etc/mneme/replica-ha-2.toml
     depends_on:
       mneme-core-1:
@@ -471,6 +475,9 @@ services:
     environment:
       MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
       MNEME_HOST: mneme-core:6379
+    depends_on:
+      mneme-core:
+        condition: service_healthy
     volumes:
       - certs:/certs:ro
     networks:
@@ -485,6 +492,9 @@ services:
       MNEME_ADMIN_PASSWORD: ${MNEME_ADMIN_PASSWORD:-secret}
       MNEME_CONFIG: /etc/mneme/core.toml
       MNEME_HOST: mneme-core:6379
+    depends_on:
+      mneme-core:
+        condition: service_healthy
     volumes:
       - core-data:/var/lib/mneme
       - certs:/certs:ro

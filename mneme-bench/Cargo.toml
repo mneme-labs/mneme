@@ -3,15 +3,25 @@ name = "mneme-bench"
 version = "1.0.0"
 edition = "2021"
 
+[[bin]]
+name = "mneme-bench"
+path = "src/main.rs"
+
 [[bench]]
 name = "latency"
 harness = false
 
 [dependencies]
-mneme-common = { path = "../mneme-common" }
-mneme-core = { path = "../mneme-core" }
-bytes = { workspace = true }
-rmp-serde = { workspace = true }
-tokio = { workspace = true }
-parking_lot = { workspace = true }
-criterion = { workspace = true }
+mneme-common  = { path = "../mneme-common" }
+mneme-core    = { path = "../mneme-core" }
+mneme-client  = { path = "../mneme-client" }
+bytes         = { workspace = true }
+rmp-serde     = { workspace = true }
+tokio         = { workspace = true }
+parking_lot   = { workspace = true }
+criterion     = { workspace = true }
+clap          = { workspace = true }
+anyhow        = { workspace = true }
+rustls        = { workspace = true }
+rustls-pemfile = { workspace = true }
+tokio-rustls  = { workspace = true }

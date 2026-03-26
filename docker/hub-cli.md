@@ -94,6 +94,30 @@ mneme-cli -u admin -p secret --consistency ALL set key value
 
 ---
 
+## Pipe mode — bulk operations over a single TLS session
+
+`pipe` mode reads commands from stdin over a single persistent TLS connection, eliminating per-invocation TLS handshake overhead (~16ms → ~1.3ms per operation):
+
+```bash
+# Pipe commands into a running Core container
+printf 'SET foo bar\nSET counter 0\nGET foo\n' | \
+  docker exec -i mneme-core mneme-cli -u admin -p secret pipe
+
+# Load data from a file
+docker exec -i mneme-core mneme-cli -u admin -p secret pipe < commands.txt
+```
+
+Supported commands in pipe mode: `GET`, `SET` (with optional `TTL <seconds>` suffix), `DEL`, `EXISTS`, `TTL`, `INCR`, `DECR`, `PING`.
+
+```
+SET session:abc token123 TTL 3600
+GET session:abc
+INCR counter
+DEL old-key
+```
+
+---
+
 ## Connection profiles
 
 Save connection details to avoid repeating `--host`, `--ca-cert`, and `--username` every time:
